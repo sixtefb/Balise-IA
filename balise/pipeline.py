@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from balise.config import OFGL_STRATE_LABELS, SETTINGS, Settings
-from balise.ingestion import decp
+from balise.ingestion import decp, insee_demographie
 from balise.ingestion.decp import DecpError
 from balise.ingestion.insee import (
     CommuneAmbiguousError,
@@ -52,6 +52,7 @@ class AuditResult:
     commune: CommuneIdentity
     score_card: CommuneScoreCard
     marches_notables: tuple[dict, ...]
+    demographie: dict | None
     generated_at: str
 
 
@@ -139,11 +140,13 @@ def run_audit(
         except DecpError:
             marches = []
     marches_notables = tuple(_group_markets(marches)[:markets_limit])
+    demographie = insee_demographie.get_age_breakdown(commune.code_insee, settings=settings)
 
     return AuditResult(
         commune=commune,
         score_card=score_card,
         marches_notables=marches_notables,
+        demographie=demographie,
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -250,5 +253,6 @@ def audit_to_dict(result: AuditResult) -> dict:
             }
             for m in result.marches_notables
         ],
+        "demographie": result.demographie,
         "generated_at": result.generated_at,
     }

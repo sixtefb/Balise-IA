@@ -96,22 +96,30 @@ après le premier appel (~30s la première fois, réseau national OFGL/DECP
 compris).
 
 Contenu du rapport :
-- **Score global + 6 postes de dépense** comparés à la strate démographique
+- **Score global + 7 postes de dépense** comparés à la strate démographique
   (z-score, écart en %), chacun avec un **histogramme de distribution du
   groupe de pairs** (pas juste une barre d'écart : la forme de la
   distribution — étalée, resserrée, avec valeurs extrêmes — est visible, et
-  la position de la commune dedans aussi). 5 postes viennent des agrégats
-  OFGL (`balise.config.DEFAULT_SPENDING_ITEMS`) ; le 6e, **Entretien**
-  (voirie, espaces verts, bâtiments, nettoyage), n'existe pas comme ligne
-  séparée dans OFGL et est reconstruit depuis les marchés publics DECP
-  (`balise.ingestion.decp.get_maintenance_spending_by_commune`,
+  la position de la commune dedans aussi). 6 postes viennent des agrégats
+  OFGL (`balise.config.DEFAULT_SPENDING_ITEMS` : fonctionnement, personnel,
+  achats, équipement, dette, subventions aux associations) ; le 7e,
+  **Entretien** (voirie, espaces verts, bâtiments, nettoyage), n'existe pas
+  comme ligne séparée dans OFGL et est reconstruit depuis les marchés
+  publics DECP (`balise.ingestion.decp.get_maintenance_spending_by_commune`,
   `balise.config.DEFAULT_MAINTENANCE_CPV_CODES`) — **attention, c'est un
-  cumul de marchés notifiés, pas une dépense annuelle** comme les 5 autres
+  cumul de marchés notifiés, pas une dépense annuelle** comme les 6 autres
   postes ; le rapport le signale explicitement à côté de ce poste.
   Requête nationale unique (indépendante de la commune), lente au premier
   appel global (~2 min, un appel par code CPV, chacun sous la limite de
   pagination OpenDataSoft de 10 000 lignes), puis mise en cache 30 jours et
   réutilisée pour toutes les communes suivantes.
+- **Contexte démographique** (répartition par tranche d'âge, recensement
+  INSEE le plus récent) via `balise.ingestion.insee_demographie`
+  (`api.insee.fr/melodi`, sans clé). Informatif, **hors score** : une
+  population plus âgée ou plus jeune n'est ni un point fort ni un point de
+  vigilance en soi, ça contextualise certains écarts de dépense (une
+  commune avec plus de personnes âgées dépense normalement plus en social,
+  ce n'est pas un signe d'inefficacité).
 - **Liste des communes comparées** (nom + population), accessible en
   cliquant sur "Comparé à N communes".
 - **Marchés publics DECP** regroupés par référence de marché détectée dans
@@ -159,6 +167,7 @@ balise/
     insee.py                   # résolution commune -> code INSEE/SIREN (implémenté)
     ofgl.py                    # agrégats financiers OFGL (implémenté, validé en conditions réelles)
     decp.py                    # marchés publics DECP (implémenté, validé en conditions réelles)
+    insee_demographie.py       # démographie détaillée par tranche d'âge, api.insee.fr/melodi (implémenté, contexte hors score)
   normalization/
     strates.py                 # classement en strate démographique (seuils dans config.py)
     spending.py                # conversion des agrégats OFGL en €/habitant (implémenté)

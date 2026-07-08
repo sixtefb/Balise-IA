@@ -269,6 +269,7 @@ function renderReport(data) {
   }).join('');
 
   renderMarkets(marches);
+  renderDemographie(data.demographie);
 
   const forts = categories.filter((c) => c.qualification === 'efficient' || (c.qualification === 'conforme' && (c.delta_pct || 0) <= 0));
   const vigilance = categories.filter((c) => c.qualification === 'alerte' || c.qualification === 'a_surveiller');
@@ -306,6 +307,31 @@ function renderMarkets(marches) {
     </div>
   `;
   }).join('');
+}
+
+function renderDemographie(demographie) {
+  const section = document.getElementById('demographie-section');
+  if (!demographie || !demographie.brackets || !demographie.brackets.length) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  document.getElementById('demographie-millesime').textContent = `Recensement ${demographie.millesime}`;
+
+  const total = demographie.population_totale || 1;
+  const maxPop = Math.max(...demographie.brackets.map((b) => b.population));
+  const rows = demographie.brackets.map((b) => {
+    const pct = (b.population / total) * 100;
+    const width = maxPop ? (b.population / maxPop) * 100 : 0;
+    return `
+      <div style="display:grid; grid-template-columns:110px 1fr auto; align-items:center; gap:14px; padding:6px 0;">
+        <span style="font-size:13px; color:#33353c;">${escapeHtml(b.label)}</span>
+        <div style="height:16px; background:#eceae4;"><div style="height:100%; width:${width}%; background:#2b3a4a;"></div></div>
+        <span class="mono" style="font-size:11.5px; color:#565861; width:120px; text-align:right;">${b.population.toLocaleString('fr-FR')} hab. (${pct.toFixed(0)}%)</span>
+      </div>`;
+  }).join('');
+
+  document.getElementById('demographie-chart').innerHTML = rows;
 }
 
 function buildSummary(data) {
@@ -517,6 +543,17 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   (data.peer_communes || []).forEach((p) => {
     s4.addRow([p.nom, p.code_insee, p.population]);
   });
+
+  if (data.demographie && data.demographie.brackets && data.demographie.brackets.length) {
+    const s6 = wb.addWorksheet('Démographie');
+    s6.columns = [{ width: 20 }, { width: 14 }, { width: 10 }];
+    s6.addRow([`Tranche d'âge (recensement ${data.demographie.millesime})`, 'Population', '% du total']);
+    styleHeader(s6, ['A1', 'B1', 'C1']);
+    data.demographie.brackets.forEach((b) => {
+      const row = s6.addRow([b.label, b.population, b.population / data.demographie.population_totale]);
+      row.getCell(3).numFmt = '0%';
+    });
+  }
 
   if (lastHistory && lastHistory.years.length) {
     const s5 = wb.addWorksheet('Évolution');
