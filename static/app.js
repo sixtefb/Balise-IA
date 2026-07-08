@@ -71,10 +71,11 @@ document.getElementById('form-analyse').addEventListener('submit', (e) => {
   e.preventDefault();
   const ville = document.getElementById('input-ville').value.trim();
   const cp = document.getElementById('input-cp').value.trim();
+  const annee = document.getElementById('input-annee').value.trim();
   const errorEl = document.getElementById('input-error');
   errorEl.classList.add('hidden');
   if (!ville || !cp) return;
-  runAnalyse(ville, cp);
+  runAnalyse(ville, cp, annee);
 });
 
 // ---- Écran de chargement ----
@@ -122,11 +123,13 @@ function stopLoadingAnimation() {
 
 // ---- Lancement de l'analyse ----
 
-async function runAnalyse(ville, cp) {
+async function runAnalyse(ville, cp, annee) {
   showScreen('loading');
   startLoadingAnimation(ville, cp);
   try {
-    const res = await fetch(`/api/audit?commune=${encodeURIComponent(ville)}&code_postal=${encodeURIComponent(cp)}`);
+    let url = `/api/audit?commune=${encodeURIComponent(ville)}&code_postal=${encodeURIComponent(cp)}`;
+    if (annee) url += `&exercice=${encodeURIComponent(annee)}`;
+    const res = await fetch(url);
     const data = await res.json();
     if (!res.ok) {
       throw new Error(data.error || `Erreur ${res.status}`);
@@ -149,6 +152,36 @@ async function runAnalyse(ville, cp) {
 
 document.getElementById('btn-reset').addEventListener('click', () => {
   showScreen('input');
+});
+
+document.getElementById('btn-change-annee').addEventListener('click', async () => {
+  if (!lastReport) return;
+  const commune = lastReport.commune;
+  const cp = commune.codes_postaux[0] || '';
+  const yearRaw = document.getElementById('input-change-annee').value.trim();
+  const errorEl = document.getElementById('annee-error');
+  errorEl.classList.add('hidden');
+  const btn = document.getElementById('btn-change-annee');
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = '…';
+  try {
+    let url = `/api/audit?commune=${encodeURIComponent(commune.nom)}&code_postal=${encodeURIComponent(cp)}`;
+    if (yearRaw) url += `&exercice=${encodeURIComponent(yearRaw)}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
+    lastReport = data;
+    lastHistory = null;
+    resetEvolutionSection();
+    renderReport(data);
+  } catch (err) {
+    errorEl.textContent = `Je n'ai pas accès aux données pour cette année : ${err.message}`;
+    errorEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
 });
 
 document.getElementById('btn-retry').addEventListener('click', () => {
@@ -202,6 +235,8 @@ function renderReport(data) {
   peerBtn.textContent =
     `${data.peer_group_size} communes de la même strate — ${data.strate_label}${commune.region ? ', ' + commune.region : ''}${data.exercice ? ' (exercice ' + data.exercice + ')' : ''}`;
   document.getElementById('report-date').innerHTML = `Analyse du<br>${fmtDate(data.generated_at)}`;
+  document.getElementById('input-change-annee').value = data.exercice || '';
+  document.getElementById('annee-error').classList.add('hidden');
 
   const vs = VERDICT_STYLE[score.verdict] || VERDICT_STYLE.Vigilance;
   document.getElementById('score-donut').style.background =

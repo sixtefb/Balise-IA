@@ -121,6 +121,12 @@ def score_commune(
     """Calcule le score d'efficacité budgétaire d'une commune vs son groupe de pairs."""
     commune_data = ofgl.get_financial_data(code_insee, exercice=exercice, settings=settings)
     if commune_data is None:
+        if exercice is not None:
+            raise ScoringError(
+                f"Aucune donnée OFGL pour la commune {code_insee} sur l'exercice {exercice}. "
+                "Les comptes OFGL démarrent en général en 2014-2017 et s'arrêtent 1 à 2 ans "
+                "avant l'année en cours (délai de publication)."
+            )
         raise ScoringError(f"Aucune donnée OFGL pour la commune {code_insee}.")
 
     strate_value = commune_data.get("strate")
