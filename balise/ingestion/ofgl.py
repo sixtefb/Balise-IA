@@ -6,20 +6,19 @@ téléchargement de fichier complet :
     GET {base_url}/api/explore/v2.1/catalog/datasets/{dataset_id}/records
         ?where=insee="{code_insee}"
     GET {base_url}/api/explore/v2.1/catalog/datasets/{dataset_id}/records
-        ?where=strate="{valeur_strate}"
+        ?where=tranche_population="{valeur_strate}"
 
 Les jeux "ofgl-base-communes" / "ofgl-base-communes-consolidee" sont publiés
 au format long (une ligne par commune x exercice x agrégat).
 
-Seuls les noms de champs utilisés dans les clauses `where` ci-dessus (insee,
-strate) sont garantis. Le reste du schéma (agrégats, montants, population,
-département/région) n'a pas pu être vérifié en direct depuis l'environnement
-où ce module a été écrit (data.ofgl.fr n'y est pas joignable) : leur
-résolution passe donc par une correspondance tolérante
+Champs confirmés par appel réel (voir scripts/probe_apis.py) : `insee` et
+`tranche_population` (le champ démographique s'appelle `tranche_population`
+dans ce dataset, pas `strate`). Le reste du schéma (agrégats, montants,
+population, département/région) se résout par correspondance tolérante
 (balise.config.OFGL_COLUMN_ALIASES / OFGL_AGGREGATE_ALIASES) qui échoue
 explicitement, avec la liste des champs réellement présents, plutôt que de
 produire silencieusement un résultat erroné. Utiliser describe_schema()
-après le premier appel réel pour valider/corriger ces alias.
+pour valider/corriger ces alias au fil de l'eau.
 """
 
 from __future__ import annotations
@@ -89,11 +88,20 @@ def _parse_number(raw_value) -> float | None:
 
 
 def _match_aggregate(agregat_label) -> str | None:
+    """Match un libellé d'agrégat OFGL à un poste de dépense canonique.
+
+    Comparaison exacte (et non par sous-chaîne) : le jeu réel contient des
+    libellés qui se chevauchent en sous-chaîne (ex. "Dépenses de
+    fonctionnement" vs "Autres dépenses de fonctionnement", "Encours de
+    dette" vs "Encours de dette - Dettes bancaires et assimilées"). Une
+    correspondance par sous-chaîne ferait écraser la valeur totale par une
+    valeur de sous-catégorie selon l'ordre d'arrivée des enregistrements.
+    """
     if not agregat_label:
         return None
     normalized_label = _normalize(agregat_label)
     for item_key, aliases in OFGL_AGGREGATE_ALIASES.items():
-        if any(_normalize(alias) in normalized_label for alias in aliases):
+        if any(_normalize(alias) == normalized_label for alias in aliases):
             return item_key
     return None
 
@@ -204,7 +212,7 @@ def get_peer_group_financial_data(
     pour l'inclure dans la clause `where` envoyée à l'API.
     """
     dataset_id = _dataset_id(dataset, settings)
-    where = f'strate="{strate_value}"'
+    where = f'tranche_population="{strate_value}"'
     records = _fetch_cached(dataset_id, where, settings)
     by_commune = _pivot_records(records, exercice=exercice)
 

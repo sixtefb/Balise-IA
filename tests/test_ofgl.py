@@ -69,7 +69,7 @@ def fake_fetch(monkeypatch):
         calls.append(where)
         if where == 'insee="27681"':
             return VERNON_RECORDS
-        if where == 'strate="20000-49999"':
+        if where == 'tranche_population="20000-49999"':
             return STRATE_RECORDS
         return []
 

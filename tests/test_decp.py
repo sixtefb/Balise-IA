@@ -7,39 +7,39 @@ from balise.ingestion import decp
 VERNON_MARKETS = [
     {
         "id": "M001",
-        "acheteur_id": "21270681000019",
-        "acheteur_nom": "Mairie de Vernon",
-        "objet": "Entretien des espaces verts municipaux",
-        "codeCPV": "77300000-3",
+        "idacheteur": "21270681000019",
+        "nomacheteur": "Mairie de Vernon",
+        "objetmarche": "Entretien des espaces verts municipaux",
+        "codecpv": "77300000-3",
         "montant": "85000",
-        "dateNotification": "2023-03-01",
-        "titulaire_id_1": "12345678900011",
-        "titulaire_denominationSociale_1": "Espaces Verts SAS",
+        "datenotification": "2023-03-01",
+        "siretetablissement": "12345678900011",
+        "denominationsocialeetablissement": "Espaces Verts SAS",
     },
     {
         "id": "M004",
-        "acheteur_id": "21270681000019",
-        "acheteur_nom": "Mairie de Vernon",
-        "objet": "Fournitures de bureau",
-        "codeCPV": "30190000-7",
+        "idacheteur": "21270681000019",
+        "nomacheteur": "Mairie de Vernon",
+        "objetmarche": "Fournitures de bureau",
+        "codecpv": "30190000-7",
         "montant": "30000",
-        "dateNotification": "2023-04-01",
-        "titulaire_id_1": "11122233300044",
-        "titulaire_denominationSociale_1": "Bureau Plus",
+        "datenotification": "2023-04-01",
+        "siretetablissement": "11122233300044",
+        "denominationsocialeetablissement": "Bureau Plus",
     },
 ]
 
 CPV_MARKETS = VERNON_MARKETS + [
     {
         "id": "M003",
-        "acheteur_id": "21271000000015",
-        "acheteur_nom": "Mairie d'Une Autre Commune",
-        "objet": "Entretien des espaces verts",
-        "codeCPV": "77300000-3",
+        "idacheteur": "21271000000015",
+        "nomacheteur": "Mairie d'Une Autre Commune",
+        "objetmarche": "Entretien des espaces verts",
+        "codecpv": "77300000-3",
         "montant": "60000",
-        "dateNotification": "2023-02-10",
-        "titulaire_id_1": "55566677700033",
-        "titulaire_denominationSociale_1": "Jardins Pro",
+        "datenotification": "2023-02-10",
+        "siretetablissement": "55566677700033",
+        "denominationsocialeetablissement": "Jardins Pro",
     },
 ]
 
@@ -50,9 +50,9 @@ def fake_fetch(monkeypatch):
 
     def fake_fetch_records(base_url, dataset_id, where=None, **kwargs):
         calls.append(where)
-        if where == 'acheteur_id like "21270681000019"':
+        if where == 'startswith(idacheteur, "21270681000019")':
             return VERNON_MARKETS
-        if where == 'codeCPV like "77300000%"':
+        if where == 'startswith(codecpv, "77300000")':
             return CPV_MARKETS
         return []
 
@@ -86,7 +86,7 @@ def test_get_comparable_markets_by_cpv(fake_fetch, settings_with_tmp_cache):
 def test_describe_schema(fake_fetch, settings_with_tmp_cache):
     schema = decp.describe_schema("21270681000019", settings=settings_with_tmp_cache)
 
-    assert "acheteur_id" in schema["fields"]
+    assert "idacheteur" in schema["fields"]
     assert schema["sample_record"]["id"] == "M001"
 
 

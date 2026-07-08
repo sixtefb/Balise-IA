@@ -3,21 +3,24 @@
 Endpoints "records" (JSON, sans clé), interrogés directement :
 
     GET {base_url}/api/explore/v2.1/catalog/datasets/decp_augmente/records
-        ?where=acheteur_id like "{siren}"
+        ?where=startswith(idacheteur, "{siren}")
 
 Remarque : le jeu `decp_augmente` est signalé "obsolète" sur certaines pages
 data.gouv.fr recensant les sources DECP (une alternative plus récente, le
 fichier consolidé "format tabulaire", existe sur data.gouv.fr). Utilisé ici
 sur demande explicite.
 
-Seul le champ "acheteur_id" est confirmé (clause `where` validée). Le reste
-du schéma n'a pas pu être vérifié en direct depuis l'environnement où ce
-module a été écrit (data.economie.gouv.fr n'y est pas joignable) : sa
-résolution passe par une correspondance tolérante
+Champ confirmé par appel réel (voir scripts/probe_apis.py) : le champ
+acheteur s'appelle `idacheteur` (pas `acheteur_id`) et contient un SIRET
+(14 chiffres), pas un SIREN (9 chiffres) — d'où le filtrage par préfixe via
+`startswith()` plutôt qu'une égalité stricte. L'opérateur ODSQL `like` ne
+supporte pas les wildcards `%` façon SQL (il fait une recherche plein texte
+tokenisée) : il faut utiliser `startswith()` pour un filtrage par préfixe.
+Le reste du schéma se résout par correspondance tolérante
 (balise.config.DECP_COLUMN_ALIASES) qui échoue explicitement, avec la liste
 des champs réellement présents, plutôt que de produire silencieusement un
-résultat erroné. Utiliser describe_schema() après le premier appel réel pour
-valider/corriger ces alias.
+résultat erroné. Utiliser describe_schema() pour valider/corriger ces alias
+au fil de l'eau.
 """
 
 from __future__ import annotations
@@ -146,19 +149,14 @@ def _normalize_records(records: list[dict], montant_minimum: float) -> list[dict
 
 def get_markets_for_commune(siret_acheteur: str, settings: Settings = SETTINGS) -> list[dict]:
     """Retourne les marchés passés par une commune (SIRET/SIREN acheteur), montant >= seuil configuré."""
-    where = f'acheteur_id like "{siret_acheteur}"'
+    where = f'startswith(idacheteur, "{siret_acheteur}")'
     records = _fetch_cached(where, settings)
     return _normalize_records(records, settings.decp.montant_minimum_pertinent)
 
 
 def get_comparable_markets(code_cpv_prefix: str, settings: Settings = SETTINGS) -> list[dict]:
-    """Retourne les marchés d'une même famille CPV, passés par différentes communes.
-
-    Champ CPV non confirmé en direct : where= construit sur le meilleur
-    candidat ("codeCPV"). Si l'appel échoue, corriger avec le nom exact
-    constaté via describe_schema().
-    """
-    where = f'codeCPV like "{code_cpv_prefix}%"'
+    """Retourne les marchés d'une même famille CPV, passés par différentes communes."""
+    where = f'startswith(codecpv, "{code_cpv_prefix}")'
     records = _fetch_cached(where, settings)
     return _normalize_records(records, settings.decp.montant_minimum_pertinent)
 
@@ -169,7 +167,7 @@ def describe_schema(siret_acheteur: str, settings: Settings = SETTINGS) -> dict:
     À utiliser après un premier appel réel pour valider/corriger
     balise.config.DECP_COLUMN_ALIASES.
     """
-    where = f'acheteur_id like "{siret_acheteur}"'
+    where = f'startswith(idacheteur, "{siret_acheteur}")'
     records = _fetch_cached(where, settings)
     if not records:
         return {"fields": [], "sample_record": None}

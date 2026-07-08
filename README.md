@@ -5,26 +5,32 @@ groupe de communes similaires, à partir de données ouvertes uniquement.
 
 ## État du projet
 
-**Ingestion des 3 sources connectée (INSEE, OFGL, DECP), en attente de
-validation réseau avant d'attaquer normalisation/scoring.** Les 3 modules
-d'ingestion appellent des API JSON publiques sans clé, en requêtes
+**Ingestion des 3 sources connectée et validée en conditions réelles**
+(INSEE, OFGL, DECP) contre `--commune Vernon --code-postal 27200`. Les 3
+modules d'ingestion appellent des API JSON publiques sans clé, en requêtes
 ciblées (pas de téléchargement de fichier complet) :
 
 | Module | Source | Endpoint |
 | --- | --- | --- |
 | `balise/ingestion/insee.py` | geo.api.gouv.fr | `GET /communes?codePostal=...` puis `GET /communes/{code}?fields=...siren...` |
-| `balise/ingestion/ofgl.py` | data.ofgl.fr (OpenDataSoft v2.1) | `GET /records?where=insee="..."` et `where=strate="..."` |
-| `balise/ingestion/decp.py` | data.economie.gouv.fr (OpenDataSoft v2.1, `decp_augmente`) | `GET /records?where=acheteur_id like "..."` |
+| `balise/ingestion/ofgl.py` | data.ofgl.fr (OpenDataSoft v2.1) | `GET /records?where=insee="..."` et `where=tranche_population="..."` |
+| `balise/ingestion/decp.py` | data.economie.gouv.fr (OpenDataSoft v2.1, `decp_augmente`) | `GET /records?where=startswith(idacheteur, "...")` |
 
 Un script de validation manuelle est fourni : `scripts/probe_apis.py`
-(voir plus bas). **Il n'a pas pu être exécuté avec succès depuis
-l'environnement où ce code a été écrit** (réseau sortant bloqué vers ces
-trois domaines) — voir [Limitation réseau](#limitation-réseau-de-lenvironnement-de-développement).
+(voir plus bas). Exécuté avec succès (Status 200 sur les 4 requêtes) le
+temps de corriger deux bugs de schéma découverts au premier appel réel : le
+champ démographique OFGL s'appelle `tranche_population` (pas `strate`), et
+le champ acheteur DECP s'appelle `idacheteur` et contient un SIRET, pas un
+SIREN (filtrage par préfixe via `startswith()`, l'opérateur `like` ne
+supportant pas les wildcards `%` façon SQL sur cette API). Les alias de
+`balise/config.py` (`OFGL_COLUMN_ALIASES`, `OFGL_AGGREGATE_ALIASES`,
+`DECP_COLUMN_ALIASES`) ont été recalés sur les vrais noms de champs et
+libellés d'agrégats constatés.
 
 Le rapport d'audit complet (normalisation €/habitant, scoring, génération
-Markdown/PDF) n'est pas encore implémenté : la priorité est de confirmer que
-les 3 sources renvoient bien des données exploitables avant de construire
-dessus (`balise/normalization/`, `balise/scoring/` restent des squelettes).
+Markdown/PDF) n'est pas encore implémenté : `balise/normalization/` et
+`balise/scoring/` restent des squelettes, désormais construits sur une
+couche d'ingestion validée en conditions réelles.
 
 ## Installation
 
@@ -101,17 +107,20 @@ ce qui évite une refonte quand cette couche sera implémentée.
 
 ### Résolution de schéma tolérante (OFGL, DECP)
 
-Le nom exact des champs renvoyés par OFGL (`data.ofgl.fr`) et par
-`decp_augmente` (`data.economie.gouv.fr`) n'a pas pu être vérifié en direct
-(voir limitation réseau ci-dessous). Seuls les champs utilisés dans les
-clauses `where` fournies sont confirmés : `insee`, `strate` (OFGL) et
-`acheteur_id` (DECP). Pour tout le reste (agrégats financiers, montants,
-titulaires...), le code résout les noms de champs par correspondance
-tolérante contre une liste d'alias configurable
+Les champs utilisés dans les clauses `where` sont confirmés par appel réel :
+`insee` et `tranche_population` (OFGL), `idacheteur` (DECP, filtré par
+préfixe SIRET via `startswith()`). Pour le reste (agrégats financiers,
+montants, titulaires...), le code résout les noms de champs par
+correspondance tolérante contre une liste d'alias configurable
 (`OFGL_COLUMN_ALIASES`, `OFGL_AGGREGATE_ALIASES`, `DECP_COLUMN_ALIASES` dans
 `balise/config.py`), et échoue explicitement avec la liste des champs
 réellement reçus s'il ne trouve pas de correspondance — plutôt que de
-produire silencieusement un résultat erroné.
+produire silencieusement un résultat erroné. Les libellés d'agrégats OFGL
+(`OFGL_AGGREGATE_ALIASES`) sont comparés en égalité exacte (et non par
+sous-chaîne) : le jeu réel contient des libellés qui se chevauchent (ex.
+"Dépenses de fonctionnement" vs "Autres dépenses de fonctionnement"), une
+correspondance par sous-chaîne aurait fait écraser silencieusement le total
+par une sous-catégorie selon l'ordre d'arrivée des enregistrements.
 
 Deux fonctions de diagnostic aident à corriger ces alias après un premier
 appel réel :
@@ -131,26 +140,6 @@ quotidiennement, schéma confirmé via
 [ColinMaudry/decp-table-schema](https://github.com/ColinMaudry/decp-table-schema)).
 `decp_augmente` est utilisé ici sur demande explicite ; à reconsidérer si le
 premier appel réel montre des données absentes ou trop anciennes.
-
-## Limitation réseau de l'environnement de développement
-
-Le sandbox utilisé pour écrire ce code bloque les appels sortants vers
-`geo.api.gouv.fr`, `data.ofgl.fr` et `data.economie.gouv.fr` (politique
-d'egress restreinte à quelques domaines : GitHub, registres de paquets,
-services Anthropic). **Aucun des 3 endpoints n'a donc pu être testé en
-conditions réelles** — uniquement via des tests unitaires mockés contre des
-réponses construites à partir de la documentation et de schémas confirmés
-quand possible (DECP "format tabulaire" via GitHub, pagination
-OpenDataSoft).
-
-Pour valider réellement le backend :
-1. Lancer `python scripts/probe_apis.py --commune Vernon --code-postal 27200`
-   depuis une machine (ou un environnement Claude Code) ayant accès à ces
-   3 domaines.
-2. Comparer les champs réellement reçus aux alias configurés dans
-   `balise/config.py` (`OFGL_COLUMN_ALIASES`, `OFGL_AGGREGATE_ALIASES`,
-   `DECP_COLUMN_ALIASES`) et corriger si nécessaire.
-3. Relancer `pytest -q` puis `python audit.py --commune ... --code-postal ...`.
 
 ## Prochaines étapes (après validation des 3 API)
 

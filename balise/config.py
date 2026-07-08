@@ -102,15 +102,16 @@ class OfglApiSettings:
 
 # Alias candidats (en minuscules, sans accents) pour identifier les champs
 # significatifs dans les enregistrements OFGL reçus, quel que soit leur nom
-# exact. Seuls "insee" et "strate" sont confirmés (utilisés dans les clauses
-# `where` des requêtes) ; le reste du schéma doit être complété avec les
-# vrais noms de champs constatés au premier appel réel (voir
-# balise.ingestion.ofgl.describe_schema).
+# exact. "insee" et "tranche_population" (le champ démographique, appelé
+# "strate" dans le code/la doc mais "tranche_population" dans l'API) sont
+# confirmés par appel réel (utilisés dans les clauses `where` des requêtes) ;
+# le reste du schéma doit être complété avec les vrais noms de champs
+# constatés au premier appel réel (voir balise.ingestion.ofgl.describe_schema).
 OFGL_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "code_insee": ("insee", "code_insee", "codeinsee", "code_geographique"),
     "siren": ("siren", "siren_collectivite"),
-    "exercice": ("exercice", "annee", "an"),
-    "population": ("population", "population_totale", "pop_totale"),
+    "exercice": ("exer", "exercice", "annee"),
+    "population": ("ptot", "population", "population_totale", "pop_totale"),
     "strate": ("tranche_population", "strate", "categorie"),
     "code_departement": ("dep_code", "code_dep", "departement_code", "code_departement"),
     "code_region": ("reg_code", "code_reg", "region_code", "code_region"),
@@ -118,16 +119,27 @@ OFGL_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "montant": ("montant", "valeur", "montant_euros"),
 }
 
-# Alias candidats (sous-chaînes, comparaison insensible à la casse/accents)
-# pour repérer, dans un jeu au format long (colonne "agregat" + "montant"),
-# la ligne correspondant à chaque poste de dépense canonique. À valider et
-# recaler au premier chargement réel.
+# Alias candidats (comparaison EXACTE, insensible à la casse/accents) pour
+# repérer, dans un jeu au format long (colonne "agregat" + "montant"), la
+# ligne correspondant à chaque poste de dépense canonique. Les premiers
+# candidats de chaque tuple sont les libellés confirmés par appel réel sur
+# le dataset ofgl-base-communes (voir scripts/probe_apis.py) ; les suivants
+# sont d'anciennes suppositions conservées pour compatibilité avec d'autres
+# jeux OFGL (ex. ofgl-base-communes-consolidee) non encore vérifiés.
 OFGL_AGGREGATE_ALIASES: dict[str, tuple[str, ...]] = {
-    "charges_de_fonctionnement": ("charges de fonctionnement", "charges courantes de fonctionnement"),
-    "charges_de_personnel": ("charges de personnel", "charges de personnel et frais assimiles"),
+    "charges_de_fonctionnement": (
+        "depenses de fonctionnement",
+        "charges de fonctionnement",
+        "charges courantes de fonctionnement",
+    ),
+    "charges_de_personnel": (
+        "frais de personnel",
+        "charges de personnel",
+        "charges de personnel et frais assimiles",
+    ),
     "achats_et_charges_externes": ("achats et charges externes",),
     "depenses_d_equipement": ("depenses d'equipement", "depenses d equipement"),
-    "encours_de_dette": ("encours de la dette", "encours de dette au 31/12"),
+    "encours_de_dette": ("encours de dette", "encours de la dette", "encours de dette au 31/12"),
 }
 
 
@@ -136,7 +148,7 @@ class DecpApiSettings:
     """Paramètres d'accès aux marchés publics DECP (API OpenDataSoft v2.1, endpoint "records").
 
     GET {base_url}/api/explore/v2.1/catalog/datasets/{dataset_id}/records
-        ?where=acheteur_id like "{siren}"
+        ?where=startswith(idacheteur, "{siren}")
 
     Le jeu `decp_augmente` de data.economie.gouv.fr est signalé "obsolète"
     sur certaines pages data.gouv.fr recensant les sources DECP ; il est
@@ -160,14 +172,15 @@ class DecpApiSettings:
 # premier appel réel (voir balise.ingestion.decp.describe_schema).
 DECP_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "id": ("id", "identifiant", "uid"),
-    "acheteur_id": ("acheteur_id", "id_acheteur", "siret_acheteur"),
-    "acheteur_nom": ("acheteur_nom", "nomacheteur", "nom_acheteur"),
-    "objet": ("objet",),
+    "acheteur_id": ("idacheteur", "acheteur_id", "id_acheteur", "siret_acheteur"),
+    "acheteur_nom": ("nomacheteur", "acheteur_nom", "nom_acheteur"),
+    "objet": ("objetmarche", "objet"),
     "code_cpv": ("codecpv", "code_cpv", "cpv"),
     "montant": ("montant",),
     "date_notification": ("datenotification", "date_notification"),
-    "titulaire_id": ("titulaire_id", "titulaire_id_1", "id_titulaire"),
+    "titulaire_id": ("siretetablissement", "titulaire_id", "titulaire_id_1", "id_titulaire"),
     "titulaire_denomination": (
+        "denominationsocialeetablissement",
         "titulaire_denominationsociale",
         "titulaire_denominationsociale_1",
         "denominationsociale",
