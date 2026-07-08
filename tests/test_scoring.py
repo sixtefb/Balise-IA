@@ -14,6 +14,7 @@ COMMUNE_DATA = {
     "achats_et_charges_externes": 300_000.0,  # identique à tous les pairs (sd=0) -> conforme
     "depenses_d_equipement": 300_000.0,  # identique à tous les pairs (sd=0) -> conforme
     "encours_de_dette": 1_600_000.0,  # 1600 €/hab : très au-dessus des pairs -> alerte
+    "subventions_associations": 200_000.0,  # 200 €/hab : pile la moyenne des pairs -> conforme
 }
 
 PEERS = [
@@ -26,6 +27,7 @@ PEERS = [
         "achats_et_charges_externes": 300_000.0,
         "depenses_d_equipement": 300_000.0,
         "encours_de_dette": (400_000 + i * 100_000),
+        "subventions_associations": (150_000 + i * 25_000),
     }
     for i in range(5)
 ]
@@ -62,7 +64,7 @@ def test_score_commune_qualifications(mocked_sources):
 
     assert card.strate_value == "8"
     assert card.peer_group_size == 5
-    assert len(card.items) == 6
+    assert len(card.items) == 7
 
     by_key = {it.key: it for it in card.items}
     assert by_key["charges_de_fonctionnement"].qualification == "conforme"
@@ -72,6 +74,8 @@ def test_score_commune_qualifications(mocked_sources):
     assert by_key["depenses_d_equipement"].qualification == "conforme"
     assert by_key["encours_de_dette"].qualification == "alerte"
     assert by_key["encours_de_dette"].z_score > 2.0
+    assert by_key["subventions_associations"].qualification == "conforme"
+    assert by_key["subventions_associations"].z_score == 0.0
     assert by_key["entretien"].qualification == "conforme"
     assert by_key["entretien"].commune_par_habitant == pytest.approx(50.0)
     assert by_key["entretien"].peer_median_par_habitant == pytest.approx(50.0)

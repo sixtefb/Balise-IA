@@ -81,6 +81,7 @@ DEFAULT_SPENDING_ITEMS: tuple[SpendingItem, ...] = (
     SpendingItem("achats_et_charges_externes", "Achats et charges externes"),
     SpendingItem("depenses_d_equipement", "Dépenses d'équipement"),
     SpendingItem("encours_de_dette", "Encours de la dette"),
+    SpendingItem("subventions_associations", "Subventions aux associations"),
 )
 
 
@@ -97,7 +98,16 @@ class OfglApiSettings:
     request_timeout_seconds: float = 30.0
     max_retries: int = 3
     retry_backoff_seconds: float = 1.0
-    max_records_per_query: int = 2_000
+    # Doit rester nettement au-dessus de (nb de communes de la strate la
+    # plus peuplée x nb d'agrégats dans settings.spending_items) : un
+    # plafond trop juste tronque silencieusement le groupe de comparaison
+    # de façon inégale selon les postes (constaté en direct en passant de 5
+    # à 6 postes : 2000 suffisait tout juste à 5, une requête à 6 agrégats
+    # dépassait déjà 2000 lignes et coupait le groupe de façon incohérente
+    # d'un poste à l'autre - 245 à 360 communes selon le poste au lieu de
+    # 360 partout). Ajouter un poste OFGL doit rester une simple entrée de
+    # config, jamais un ajustement manuel de ce plafond.
+    max_records_per_query: int = 6_000
 
 
 # Alias candidats (en minuscules, sans accents) pour identifier les champs
@@ -153,6 +163,7 @@ OFGL_AGGREGATE_ALIASES: dict[str, tuple[str, ...]] = {
     "achats_et_charges_externes": ("achats et charges externes",),
     "depenses_d_equipement": ("depenses d'equipement", "depenses d equipement"),
     "encours_de_dette": ("encours de dette", "encours de la dette", "encours de dette au 31/12"),
+    "subventions_associations": ("subventions aux personnes de droit prive",),
 }
 
 # Libellés exacts (accents/casse d'origine) des agrégats OFGL, confirmés par
@@ -167,6 +178,7 @@ OFGL_AGGREGATE_QUERY_LABELS: dict[str, str] = {
     "achats_et_charges_externes": "Achats et charges externes",
     "depenses_d_equipement": "Dépenses d'équipement",
     "encours_de_dette": "Encours de dette",
+    "subventions_associations": "Subventions aux personnes de droit privé",
 }
 
 # Signification des codes "tranche_population" (champ `strate` résolu) du
