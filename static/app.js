@@ -251,12 +251,14 @@ function renderReport(data) {
 
   document.getElementById('categories-list').innerHTML = categories.map((c) => {
     const qs = QUALITY_STYLE[c.qualification] || QUALITY_STYLE.donnee_absente;
+    const isMaintenance = c.key === 'entretien';
     return `
       <div style="padding:16px 0; border-top:1px solid #eceae4;">
         <div style="display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-bottom:8px;">
           <span style="font-size:15px; font-weight:500;">${escapeHtml(c.label)}</span>
           <span class="mono" style="font-size:12px; font-weight:600; padding:3px 9px; text-align:center; color:${qs.color}; background:${qs.bg};">${fmtPct(c.delta_pct)}</span>
         </div>
+        ${isMaintenance ? `<p class="mono" style="font-size:10.5px; color:#9a9b9f; margin:0 0 8px; font-style:italic;">Source différente des 5 postes ci-dessus : cumul des marchés publics DECP notifiés (voirie, espaces verts, bâtiments, nettoyage), pas une dépense annuelle OFGL — comparable entre communes, mais pas à lire comme un budget annuel.</p>` : ''}
         ${renderDistributionSvg(c.peer_values, c.commune_par_habitant, qs.bar)}
         <div class="mono" style="display:flex; justify-content:space-between; font-size:10.5px; color:#9a9b9f; margin-top:5px; flex-wrap:wrap; gap:6px;">
           <span>médiane strate&nbsp;: ${fmtEur(c.peer_median_par_habitant)}/hab</span>

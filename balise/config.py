@@ -208,6 +208,12 @@ class DecpApiSettings:
     retry_backoff_seconds: float = 1.0
     max_records_per_query: int = 1_000
     montant_minimum_pertinent: float = 40_000.0
+    # L'API OpenDataSoft refuse toute pagination au-delà de offset+limit =
+    # 10 000 (constaté en direct : une requête au-delà échoue en 400, quel
+    # que soit max_records demandé). Les requêtes "entretien" doivent donc
+    # rester sous ce plafond dataset par dataset (voir maintenance_cpv_codes
+    # : chaque code CPV est interrogé séparément plutôt qu'en un seul OR).
+    entretien_max_records: int = 10_000
 
 
 # Alias candidats pour identifier les champs significatifs dans les
@@ -230,6 +236,7 @@ DECP_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
         "denominationsociale",
         "nom_titulaire",
     ),
+    "commune_acheteur": ("codecommuneacheteur", "code_commune_acheteur", "codecommune"),
 }
 
 
@@ -259,6 +266,21 @@ DEFAULT_CPV_CODES: tuple[CpvCode, ...] = (
 )
 
 
+# Sous-ensemble de DEFAULT_CPV_CODES considéré comme "entretien" (voirie,
+# espaces verts, bâtiments, nettoyage) : sert à construire un 6e poste de
+# dépense comparé à la strate, en complément des 5 agrégats OFGL (qui n'ont
+# pas de ligne "entretien" séparée — voir balise.ingestion.decp).
+# Chaque code est interrogé séparément (voir entretien_max_records) : leurs
+# volumes individuels sont chacun < 10 000, contrairement à une requête OR
+# combinée qui dépasserait le plafond de pagination OpenDataSoft.
+DEFAULT_MAINTENANCE_CPV_CODES: tuple[CpvCode, ...] = (
+    CpvCode("77300000", "Espaces verts"),
+    CpvCode("90600000", "Nettoyage et balayage de la voirie"),
+    CpvCode("45233140", "Travaux d'entretien de voirie"),
+    CpvCode("50000000", "Réparation et entretien (bâtiments, équipements)"),
+)
+
+
 @dataclass(frozen=True)
 class Settings:
     cache_db_path: Path = DEFAULT_CACHE_DB_PATH
@@ -270,6 +292,7 @@ class Settings:
     scoring: ScoringThresholds = field(default_factory=ScoringThresholds)
     spending_items: tuple[SpendingItem, ...] = DEFAULT_SPENDING_ITEMS
     cpv_codes: tuple[CpvCode, ...] = DEFAULT_CPV_CODES
+    maintenance_cpv_codes: tuple[CpvCode, ...] = DEFAULT_MAINTENANCE_CPV_CODES
 
 
 SETTINGS = Settings()

@@ -96,11 +96,22 @@ après le premier appel (~30s la première fois, réseau national OFGL/DECP
 compris).
 
 Contenu du rapport :
-- **Score global + 5 postes de dépense** comparés à la strate démographique
+- **Score global + 6 postes de dépense** comparés à la strate démographique
   (z-score, écart en %), chacun avec un **histogramme de distribution du
   groupe de pairs** (pas juste une barre d'écart : la forme de la
   distribution — étalée, resserrée, avec valeurs extrêmes — est visible, et
-  la position de la commune dedans aussi).
+  la position de la commune dedans aussi). 5 postes viennent des agrégats
+  OFGL (`balise.config.DEFAULT_SPENDING_ITEMS`) ; le 6e, **Entretien**
+  (voirie, espaces verts, bâtiments, nettoyage), n'existe pas comme ligne
+  séparée dans OFGL et est reconstruit depuis les marchés publics DECP
+  (`balise.ingestion.decp.get_maintenance_spending_by_commune`,
+  `balise.config.DEFAULT_MAINTENANCE_CPV_CODES`) — **attention, c'est un
+  cumul de marchés notifiés, pas une dépense annuelle** comme les 5 autres
+  postes ; le rapport le signale explicitement à côté de ce poste.
+  Requête nationale unique (indépendante de la commune), lente au premier
+  appel global (~2 min, un appel par code CPV, chacun sous la limite de
+  pagination OpenDataSoft de 10 000 lignes), puis mise en cache 30 jours et
+  réutilisée pour toutes les communes suivantes.
 - **Liste des communes comparées** (nom + population), accessible en
   cliquant sur "Comparé à N communes".
 - **Marchés publics DECP** regroupés par référence de marché détectée dans
@@ -112,6 +123,10 @@ Contenu du rapport :
   (bouton "Voir l'évolution", 3/5/10 ans) via `GET /api/audit/history` :
   chaque année interrogée = un nouvel appel national à OFGL (~10-20s non
   caché), volontairement pas chargé automatiquement à chaque audit.
+- **Année au choix** : champ optionnel à la saisie, ou bouton "Changer
+  d'année" directement sur le rapport. Message d'erreur explicite si OFGL
+  n'a pas de données pour l'année demandée (couverture réelle : environ
+  2014/2017 à aujourd'hui -1/-2 ans, délai de publication).
 
 ## Tests
 
@@ -209,11 +224,13 @@ haut). Reste :
    web/API (`balise/pipeline.py::run_audit`). Le brancher sur `audit.py`
    pour un export Markdown → PDF en CLI, équivalent à l'interface web.
 2. **Marchés DECP "anormaux"** : la section "Marchés publics notables" de
-   l'interface liste aujourd'hui les plus gros marchés de la commune, sans
-   les comparer à ceux de communes similaires (contrairement aux postes de
-   dépense OFGL, qui eux sont comparés à la strate). Croiser DECP avec les
-   codes CPV de référence (`balise/config.py::DEFAULT_CPV_CODES`) pour une
-   vraie comparaison montant/prestation entre communes.
+   l'interface liste toujours les plus gros marchés de la commune sans les
+   comparer à ceux de communes similaires. Le poste "Entretien" (voir plus
+   haut) applique déjà ce principe pour un sous-ensemble de codes CPV
+   (`DEFAULT_MAINTENANCE_CPV_CODES`) ; l'étendre au reste de
+   `DEFAULT_CPV_CODES` (restauration collective, gardiennage, eau/énergie...)
+   donnerait une vraie comparaison montant/prestation entre communes sur
+   plus de familles de marchés.
 3. **Élargissement géographique du groupe de comparaison** : `score_commune`
    n'élargit pas automatiquement le groupe si la strate nationale était
    sous le seuil minimal configuré (`ScoringThresholds.min_peer_group_size`)

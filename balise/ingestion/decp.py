@@ -89,7 +89,7 @@ def _parse_number(raw_value) -> float | None:
         return None
 
 
-def _fetch_cached(where: str, settings: Settings) -> list[dict]:
+def _fetch_cached(where: str, settings: Settings, max_records: int | None = None) -> list[dict]:
     con = get_connection(settings)
     dataset_id = settings.decp.dataset_marches
     cache_key = f"decp:{dataset_id}:{where}"
@@ -103,7 +103,7 @@ def _fetch_cached(where: str, settings: Settings) -> list[dict]:
             settings.decp.base_url,
             dataset_id,
             where=where,
-            max_records=settings.decp.max_records_per_query,
+            max_records=max_records or settings.decp.max_records_per_query,
             timeout=settings.decp.request_timeout_seconds,
             max_retries=settings.decp.max_retries,
             retry_backoff_seconds=settings.decp.retry_backoff_seconds,
@@ -159,6 +159,53 @@ def get_comparable_markets(code_cpv_prefix: str, settings: Settings = SETTINGS) 
     where = f'startswith(codecpv, "{code_cpv_prefix}")'
     records = _fetch_cached(where, settings)
     return _normalize_records(records, settings.decp.montant_minimum_pertinent)
+
+
+def get_maintenance_spending_by_commune(settings: Settings = SETTINGS) -> dict[str, float]:
+    """Dépenses d'entretien (voirie, espaces verts, bâtiments, nettoyage), sommées par
+    commune acheteuse, à l'échelle nationale (`balise.config.DEFAULT_MAINTENANCE_CPV_CODES`).
+
+    Requête indépendante de toute commune particulière : une requête par
+    code CPV configuré (chacune mise en cache séparément), pas une requête
+    par commune. Sert de table de référence nationale réutilisée pour
+    comparer n'importe quelle commune à sa strate (balise.scoring). Lente au
+    premier appel (plusieurs dizaines de milliers d'enregistrements au
+    total, ~2 min) mais mise en cache ensuite (balise.storage.db, TTL
+    `settings.cache_ttl_days`).
+
+    Limite méthodologique assumée : la date disponible est celle de
+    notification du marché, pas une exécution annuelle — un accord-cadre
+    pluriannuel notifié une année pèse tout son montant sur cette
+    "photographie", sans répartition dans le temps. Le total retourné est
+    donc un indicateur d'exposition contractuelle cumulée à l'entretien, pas
+    une dépense annuelle au sens strict (contrairement aux agrégats OFGL).
+    """
+    totals: dict[str, float] = {}
+    for cpv in settings.maintenance_cpv_codes:
+        where = f'startswith(codecpv, "{cpv.prefix}")'
+        try:
+            records = _fetch_cached(where, settings, max_records=settings.decp.entretien_max_records)
+        except DecpError:
+            continue
+        if not records:
+            continue
+
+        sample_fields = list(records[0].keys())
+        commune_field = _try_resolve_field(sample_fields, "commune_acheteur")
+        montant_field = _try_resolve_field(sample_fields, "montant")
+        if commune_field is None or montant_field is None:
+            continue
+
+        for record in records:
+            code_insee = str(record.get(commune_field) or "").strip()
+            if not code_insee:
+                continue
+            montant = _parse_number(record.get(montant_field))
+            if montant is None:
+                continue
+            totals[code_insee] = totals.get(code_insee, 0.0) + montant
+
+    return totals
 
 
 def describe_schema(siret_acheteur: str, settings: Settings = SETTINGS) -> dict:

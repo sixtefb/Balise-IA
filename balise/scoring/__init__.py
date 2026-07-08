@@ -9,6 +9,12 @@
 - `score_commune` : calcule, pour chaque poste de dépense configuré, le
   z-score de la commune par rapport à son groupe de comparaison (en
   €/habitant), et un score global 0-100 dérivé de la moyenne de ces z-scores.
+  6 postes au total : les 5 agrégats OFGL (`settings.spending_items`) plus
+  un poste "entretien" (voirie, espaces verts, bâtiments, nettoyage)
+  reconstruit depuis les marchés publics DECP, faute de ligne "entretien"
+  séparée dans les agrégats OFGL (voir `balise.ingestion.decp.get_maintenance_spending_by_commune`
+  pour la limite méthodologique : cumul de marchés notifiés, pas une
+  dépense annuelle).
 
 Hypothèse simplificatrice assumée : pour chaque poste de dépense, dépenser
 moins que le groupe de comparaison est considéré "efficient" et dépenser
@@ -24,8 +30,12 @@ from dataclasses import dataclass
 from statistics import mean, median, pstdev
 
 from balise.config import SETTINGS, Settings
-from balise.ingestion import ofgl
+from balise.ingestion import decp, ofgl
+from balise.ingestion.decp import DecpError
 from balise.normalization.spending import normalize_financial_data
+
+MAINTENANCE_ITEM_KEY = "entretien"
+MAINTENANCE_ITEM_LABEL = "Entretien (voirie, espaces verts, bâtiments)"
 
 
 class ScoringError(Exception):
@@ -94,6 +104,81 @@ def _verdict(global_score: int) -> str:
     return "Vigilance"
 
 
+def _build_item_score(
+    key: str,
+    label: str,
+    commune_value: float | None,
+    peer_values: list[float],
+    settings: Settings,
+) -> SpendingItemScore:
+    """Compare une valeur (commune, en €/habitant) à son groupe de pairs (même unité)."""
+    if commune_value is None or len(peer_values) < 2:
+        return SpendingItemScore(
+            key=key,
+            label=label,
+            commune_par_habitant=commune_value,
+            peer_median_par_habitant=median(peer_values) if peer_values else None,
+            peer_count=len(peer_values),
+            peer_values=tuple(peer_values),
+            z_score=None,
+            delta_pct=None,
+            qualification="donnee_absente",
+            item_score=None,
+        )
+
+    peer_mean = mean(peer_values)
+    peer_sd = pstdev(peer_values)
+    z_score = 0.0 if peer_sd == 0 else (commune_value - peer_mean) / peer_sd
+    peer_median = median(peer_values)
+    delta_pct = None if peer_median == 0 else (commune_value - peer_median) / peer_median
+
+    return SpendingItemScore(
+        key=key,
+        label=label,
+        commune_par_habitant=commune_value,
+        peer_median_par_habitant=peer_median,
+        peer_count=len(peer_values),
+        peer_values=tuple(peer_values),
+        z_score=z_score,
+        delta_pct=delta_pct,
+        qualification=_qualify(z_score, settings.scoring),
+        item_score=_item_score(z_score),
+    )
+
+
+def _maintenance_item_score(
+    code_insee: str,
+    commune_population: float | None,
+    peers: list[dict],
+    settings: Settings,
+) -> SpendingItemScore:
+    """6e poste, hors OFGL : dépenses d'entretien reconstruites depuis les marchés DECP.
+
+    Contrairement aux 5 postes OFGL, ce n'est pas une dépense annuelle mais
+    un cumul de marchés notifiés (voir balise.ingestion.decp.get_maintenance_spending_by_commune)
+    — comparé aux pairs sur la même base, donc cohérent en relatif, mais à
+    ne pas lire comme un flux budgétaire annuel.
+    """
+    try:
+        totals = decp.get_maintenance_spending_by_commune(settings=settings)
+    except DecpError:
+        totals = {}
+
+    commune_total = totals.get(code_insee)
+    commune_value = (
+        commune_total / commune_population if commune_total is not None and commune_population else None
+    )
+
+    peer_values: list[float] = []
+    for peer in peers:
+        peer_total = totals.get(peer["code_insee"])
+        peer_population = peer.get("population")
+        if peer_total is not None and peer_population:
+            peer_values.append(peer_total / peer_population)
+
+    return _build_item_score(MAINTENANCE_ITEM_KEY, MAINTENANCE_ITEM_LABEL, commune_value, peer_values, settings)
+
+
 def build_peer_group(
     code_insee: str,
     strate_value: str,
@@ -141,44 +226,9 @@ def score_commune(
     for item in settings.spending_items:
         commune_value = commune_norm[item.key]
         peer_values = [v[item.key] for v in peers_norm if v[item.key] is not None]
+        items.append(_build_item_score(item.key, item.label, commune_value, peer_values, settings))
 
-        if commune_value is None or len(peer_values) < 2:
-            items.append(
-                SpendingItemScore(
-                    key=item.key,
-                    label=item.label,
-                    commune_par_habitant=commune_value,
-                    peer_median_par_habitant=median(peer_values) if peer_values else None,
-                    peer_count=len(peer_values),
-                    peer_values=tuple(peer_values),
-                    z_score=None,
-                    delta_pct=None,
-                    qualification="donnee_absente",
-                    item_score=None,
-                )
-            )
-            continue
-
-        peer_mean = mean(peer_values)
-        peer_sd = pstdev(peer_values)
-        z_score = 0.0 if peer_sd == 0 else (commune_value - peer_mean) / peer_sd
-        peer_median = median(peer_values)
-        delta_pct = None if peer_median == 0 else (commune_value - peer_median) / peer_median
-
-        items.append(
-            SpendingItemScore(
-                key=item.key,
-                label=item.label,
-                commune_par_habitant=commune_value,
-                peer_median_par_habitant=peer_median,
-                peer_count=len(peer_values),
-                peer_values=tuple(peer_values),
-                z_score=z_score,
-                delta_pct=delta_pct,
-                qualification=_qualify(z_score, settings.scoring),
-                item_score=_item_score(z_score),
-            )
-        )
+    items.append(_maintenance_item_score(code_insee, commune_data.get("population"), peers, settings))
 
     scored = [it.item_score for it in items if it.item_score is not None]
     global_score = round(mean(scored)) if scored else 50
