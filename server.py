@@ -3,6 +3,8 @@
 
 Usage :
     python server.py                 # http://127.0.0.1:5000
+    PORT=8000 python server.py       # autre port (ex. macOS : AirPlay Receiver
+                                      # occupe le 5000 par défaut depuis Monterey)
     FLASK_DEBUG=1 python server.py   # rechargement auto pendant le développement
 """
 
@@ -62,4 +64,5 @@ def api_audit():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=bool(os.environ.get("FLASK_DEBUG")))
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="127.0.0.1", port=port, debug=bool(os.environ.get("FLASK_DEBUG")))
