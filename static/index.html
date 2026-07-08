@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Balise IA — dépenses publiques</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Libre+Franklin:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="/vendor/exceljs.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: #f2f1ec; font-family: 'Libre Franklin', system-ui, sans-serif; color: #1c1d21; -webkit-font-smoothing: antialiased; }
+  a { color: #2b3a4a; text-decoration: none; }
+  a:hover { color: #16202b; text-decoration: underline; }
+  input:focus { outline: none; }
+  button { font-family: inherit; }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+  .hidden { display: none !important; }
+  @keyframes bspin { to { transform: rotate(360deg); } }
+  @keyframes bfade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @keyframes bpulse { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+  .logo-diamond { width: 22px; height: 22px; background: #2b3a4a; transform: rotate(45deg); position: relative; flex: none; }
+  .logo-diamond::after { content: ''; position: absolute; inset: 7px; background: #f2f1ec; }
+  .btn-primary { padding: 13px; background: #2b3a4a; color: #fff; border: none; font-size: 15px; font-weight: 600; cursor: pointer; letter-spacing: 0.01em; }
+  .btn-primary:hover { background: #16202b; }
+  .btn-secondary { padding: 8px 14px; background: transparent; border: 1px solid #d5d4ce; color: #1c1d21; font-size: 13px; font-weight: 500; cursor: pointer; }
+  .btn-secondary:hover { background: #f2f1ec; }
+  .btn-export { display: flex; align-items: center; gap: 7px; padding: 8px 14px; background: #2b3a4a; border: 1px solid #2b3a4a; color: #fff; font-size: 13px; font-weight: 500; cursor: pointer; }
+  .btn-export:hover { background: #16202b; }
+  .field-input { font-family: inherit; font-size: 15px; color: #1c1d21; padding: 11px 12px; border: 1px solid #d5d4ce; background: #fbfaf7; width: 100%; }
+</style>
+</head>
+<body>
+
+<!-- ============ SAISIE ============ -->
+<div id="screen-input" style="min-height:100vh; display:flex; flex-direction:column;">
+  <div style="display:flex; align-items:center; gap:11px; padding:22px 32px; border-bottom:1px solid #e2e1db;">
+    <div class="logo-diamond"></div>
+    <span style="font-size:16px; font-weight:700; letter-spacing:-0.01em;">Balise&nbsp;IA</span>
+    <span class="mono" style="font-size:11px; color:#9a9b9f; text-transform:uppercase; letter-spacing:0.08em; margin-left:2px;">dépenses publiques</span>
+  </div>
+
+  <div style="flex:1; display:flex; align-items:center; justify-content:center; padding:40px 24px;">
+    <div style="width:100%; max-width:520px;">
+      <div class="mono" style="font-size:11px; color:#8a8c94; text-transform:uppercase; letter-spacing:0.12em; margin-bottom:14px;">Nouvelle analyse</div>
+      <h1 style="font-size:34px; font-weight:700; line-height:1.12; letter-spacing:-0.02em; margin:0 0 12px;">Analyser une commune</h1>
+      <p style="font-size:15.5px; line-height:1.6; color:#565861; margin:0 0 30px; max-width:440px;">Comparez les dépenses d'une commune à celles de communes de même strate démographique pour repérer les écarts — à partir de données ouvertes (DGFiP/OFGL, data.gouv.fr).</p>
+
+      <form id="form-analyse" style="background:#fff; border:1px solid #e2e1db; padding:26px; box-shadow:0 1px 2px rgba(28,29,33,.04);">
+        <div style="display:flex; gap:14px;">
+          <label style="flex:2; display:flex; flex-direction:column; gap:7px;">
+            <span class="mono" style="font-size:11px; color:#565861; text-transform:uppercase; letter-spacing:0.07em;">Ville</span>
+            <input id="input-ville" class="field-input" value="Vernon" placeholder="Ex. Vernon" required>
+          </label>
+          <label style="flex:1; display:flex; flex-direction:column; gap:7px;">
+            <span class="mono" style="font-size:11px; color:#565861; text-transform:uppercase; letter-spacing:0.07em;">Code postal</span>
+            <input id="input-cp" class="field-input mono" value="27200" placeholder="27200" required>
+          </label>
+        </div>
+        <button type="submit" class="btn-primary" style="margin-top:20px; width:100%;">Générer le rapport</button>
+        <p id="input-error" class="hidden" style="margin:12px 0 0; font-size:13.5px; color:#8f3826;"></p>
+      </form>
+
+      <div style="display:flex; gap:8px; align-items:flex-start; margin-top:18px;">
+        <span class="mono" style="font-size:11px; color:#a8a9af;">↳</span>
+        <p class="mono" style="font-size:11.5px; line-height:1.6; color:#9a9b9f; margin:0;">Sources&nbsp;: comptes individuels des communes (DGFiP/OFGL), marchés publics DECP, geo.api.gouv.fr.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ GÉNÉRATION ============ -->
+<div id="screen-loading" class="hidden" style="min-height:100vh; display:flex; align-items:center; justify-content:center; padding:40px 24px;">
+  <div style="width:100%; max-width:440px;">
+    <div style="display:flex; align-items:center; gap:11px; margin-bottom:26px;">
+      <div class="logo-diamond" style="animation:bpulse 1.4s ease-in-out infinite;"></div>
+      <span style="font-size:16px; font-weight:700;">Balise&nbsp;IA</span>
+    </div>
+    <h2 style="font-size:22px; font-weight:700; letter-spacing:-0.01em; margin:0 0 4px;">Analyse en cours</h2>
+    <p id="loading-subtitle" class="mono" style="font-size:12px; color:#8a8c94; margin:0 0 24px;"></p>
+
+    <div style="height:4px; background:#e2e1db; margin-bottom:26px; overflow:hidden;">
+      <div id="loading-bar" style="height:100%; background:#2b3a4a; width:0%; transition:width .5s ease;"></div>
+    </div>
+
+    <div id="loading-steps"></div>
+    <p id="loading-error" class="hidden" style="margin-top:18px; font-size:13.5px; color:#8f3826;"></p>
+    <button id="btn-retry" class="btn-secondary hidden" style="margin-top:14px;">← Modifier la recherche</button>
+  </div>
+</div>
+
+<!-- ============ RAPPORT ============ -->
+<div id="screen-report" class="hidden">
+  <div style="position:sticky; top:0; z-index:5; display:flex; align-items:center; justify-content:space-between; padding:14px 32px; background:#fff; border-bottom:1px solid #e2e1db;">
+    <div style="display:flex; align-items:center; gap:11px;">
+      <div class="logo-diamond" style="width:20px; height:20px;"></div>
+      <span style="font-size:15px; font-weight:700;">Balise&nbsp;IA</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <button id="btn-reset" class="btn-secondary">← Nouvelle analyse</button>
+      <button id="btn-export" class="btn-export"><span class="mono" style="font-size:11px;">XLSX</span>Exporter</button>
+    </div>
+  </div>
+
+  <div style="max-width:940px; margin:0 auto; padding:44px 32px 80px; animation:bfade .5s ease both;">
+
+    <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:24px; flex-wrap:wrap; padding-bottom:26px; border-bottom:1px solid #e2e1db;">
+      <div>
+        <div class="mono" style="font-size:11px; color:#8a8c94; text-transform:uppercase; letter-spacing:0.12em; margin-bottom:10px;">Rapport d'analyse budgétaire</div>
+        <h1 id="report-ville" style="font-size:38px; font-weight:700; letter-spacing:-0.02em; margin:0 0 8px; line-height:1;"></h1>
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <span id="report-cp" class="mono" style="font-size:12px; color:#1c1d21; background:#eceae4; padding:3px 8px;"></span>
+          <span id="report-strate" style="font-size:13.5px; color:#565861;"></span>
+        </div>
+      </div>
+      <div id="report-date" class="mono" style="font-size:11.5px; color:#9a9b9f; text-align:right;"></div>
+    </div>
+
+    <div style="display:flex; gap:36px; align-items:center; padding:34px 0; border-bottom:1px solid #e2e1db; flex-wrap:wrap;">
+      <div style="display:flex; flex-direction:column; align-items:center; gap:14px; flex:none;">
+        <div id="score-donut" style="width:152px; height:152px; border-radius:999px; display:flex; align-items:center; justify-content:center;">
+          <div style="width:114px; height:114px; border-radius:999px; background:#f2f1ec; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+            <span id="score-value" class="mono" style="font-size:40px; font-weight:600; line-height:1;"></span>
+            <span class="mono" style="font-size:11px; color:#8a8c94; margin-top:2px;">/ 100</span>
+          </div>
+        </div>
+        <span id="score-label" class="mono" style="font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; padding:5px 12px;"></span>
+      </div>
+      <div style="flex:1; min-width:280px;">
+        <div class="mono" style="font-size:11px; color:#8a8c94; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:12px;">Indice d'efficacité budgétaire</div>
+        <p id="score-summary" style="font-size:16px; line-height:1.65; color:#33353c; margin:0;"></p>
+      </div>
+    </div>
+
+    <div style="padding:34px 0; border-bottom:1px solid #e2e1db;">
+      <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:22px;">
+        <h2 style="font-size:19px; font-weight:700; letter-spacing:-0.01em; margin:0;">Efficacité par catégorie</h2>
+        <span class="mono" style="font-size:11px; color:#9a9b9f;">écart vs médiane de strate</span>
+      </div>
+      <div id="categories-list"></div>
+    </div>
+
+    <div id="marches-section" style="padding:34px 0; border-bottom:1px solid #e2e1db;">
+      <div style="display:flex; align-items:baseline; gap:12px; margin-bottom:22px;">
+        <h2 style="font-size:19px; font-weight:700; letter-spacing:-0.01em; margin:0;">Marchés publics notables</h2>
+        <span id="marches-count" class="mono" style="font-size:12px; color:#8f3826; background:#f3e2dc; padding:2px 8px;"></span>
+      </div>
+      <p class="mono" style="font-size:11.5px; color:#9a9b9f; margin:-10px 0 18px;">Marchés DECP les plus importants passés par la commune (montant ≥ seuil configuré), à titre d'information — pas une comparaison à la strate.</p>
+      <div id="marches-list" style="display:grid; grid-template-columns:1fr 1fr; gap:16px;"></div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:36px; padding:34px 0;">
+      <div>
+        <h3 style="font-size:15px; font-weight:700; margin:0 0 16px; display:flex; align-items:center; gap:8px;"><span style="width:9px; height:9px; background:#2f5540; display:inline-block;"></span>Points forts</h3>
+        <div id="points-forts" style="display:flex; flex-direction:column; gap:12px;"></div>
+      </div>
+      <div>
+        <h3 style="font-size:15px; font-weight:700; margin:0 0 16px; display:flex; align-items:center; gap:8px;"><span style="width:9px; height:9px; background:#a5432f; display:inline-block;"></span>Points de vigilance</h3>
+        <div id="points-vigilance" style="display:flex; flex-direction:column; gap:12px;"></div>
+      </div>
+    </div>
+
+    <p class="mono" style="font-size:11px; line-height:1.6; color:#a8a9af; margin:24px 0 0; padding-top:20px; border-top:1px solid #e2e1db;">Sources&nbsp;: comptes individuels des communes (DGFiP/OFGL), marchés publics DECP, geo.api.gouv.fr. Ces écarts statistiques ne constituent pas, en eux-mêmes, la preuve d'une malversation : ce sont des pistes de vérification.</p>
+
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

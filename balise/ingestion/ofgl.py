@@ -209,12 +209,44 @@ def get_financial_data(
     dataset: str = "communes",
     settings: Settings = SETTINGS,
 ) -> dict | None:
-    """Retourne les agrégats financiers d'une commune (éventuellement filtrés sur un exercice)."""
+    """Retourne les agrégats financiers d'une commune (éventuellement filtrés sur un exercice).
+
+    Sans `exercice`, `_pivot_records` ne filtre pas par année : pour un
+    agrégat donné, la valeur retenue serait celle du dernier enregistrement
+    rencontré dans la réponse API, pas nécessairement le plus récent. Passer
+    `exercice` explicitement (voir `latest_exercice`) pour un résultat
+    déterministe.
+    """
     dataset_id = _dataset_id(dataset, settings)
     where = f'insee="{code_insee}"'
     records = _fetch_cached(dataset_id, where, settings)
     by_commune = _pivot_records(records, exercice=exercice)
     return by_commune.get(str(code_insee))
+
+
+def latest_exercice(code_insee: str, dataset: str = "communes", settings: Settings = SETTINGS) -> int | None:
+    """Exercice budgétaire le plus récent disponible (budget principal) pour cette commune."""
+    dataset_id = _dataset_id(dataset, settings)
+    where = f'insee="{code_insee}"'
+    records = _fetch_cached(dataset_id, where, settings)
+    if not records:
+        return None
+
+    sample_fields = list(records[0].keys())
+    exercice_field = _try_resolve_field(sample_fields, "exercice")
+    type_budget_field = _try_resolve_field(sample_fields, "type_de_budget")
+    if exercice_field is None:
+        return None
+
+    years: list[int] = []
+    for record in records:
+        if type_budget_field is not None:
+            if _normalize(record.get(type_budget_field) or "") != OFGL_BUDGET_PRINCIPAL_VALUE:
+                continue
+        value = _parse_number(record.get(exercice_field))
+        if value is not None:
+            years.append(int(value))
+    return max(years) if years else None
 
 
 def get_peer_group_financial_data(
