@@ -97,9 +97,11 @@ def probe_ofgl(code_insee: str) -> str | None:
         print("\nAucun enregistrement OFGL pour ce code INSEE.")
         return None
 
+    strate_field = None
     strate_value = None
     for key in results[0].keys():
-        if "strate" in key.lower():
+        if "strate" in key.lower() or key == "tranche_population":
+            strate_field = key
             strate_value = results[0][key]
             print(f"\nChamp candidat pour la strate démographique : '{key}' = {strate_value!r}")
             break
@@ -109,10 +111,10 @@ def probe_ofgl(code_insee: str) -> str | None:
         print(list(results[0].keys()))
         return None
 
-    _print_header(f"2bis. OFGL (data.ofgl.fr) — records où strate=\"{strate_value}\" (limit=100)")
+    _print_header(f"2bis. OFGL (data.ofgl.fr) — records où {strate_field}=\"{strate_value}\" (limit=100)")
     status, payload, error = _get(
         f"{OFGL_BASE_URL}/api/explore/v2.1/catalog/datasets/{OFGL_DATASET}/records",
-        {"where": f'strate="{strate_value}"', "limit": 100},
+        {"where": f'{strate_field}="{strate_value}"', "limit": 100},
     )
     if not error and status == 200:
         print(f"total_count = {payload.get('total_count')}, results reçus = {len(payload.get('results', []))}")
@@ -123,10 +125,10 @@ def probe_ofgl(code_insee: str) -> str | None:
 
 
 def probe_decp(siren: str) -> None:
-    _print_header(f"3. DECP (data.economie.gouv.fr) — records où acheteur_id like \"{siren}\"")
+    _print_header(f"3. DECP (data.economie.gouv.fr) — records où idacheteur commence par \"{siren}\"")
     status, payload, error = _get(
         f"{DECP_BASE_URL}/api/explore/v2.1/catalog/datasets/{DECP_DATASET}/records",
-        {"where": f'acheteur_id like "{siren}"', "limit": 100},
+        {"where": f'startswith(idacheteur, "{siren}")', "limit": 100},
     )
     if error or status != 200:
         return
