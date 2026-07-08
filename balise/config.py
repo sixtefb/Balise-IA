@@ -64,12 +64,155 @@ class InseeApiSettings:
 
 
 @dataclass(frozen=True)
+class SpendingItem:
+    """Un poste de dépense comparé entre communes (couche normalisation/scoring)."""
+
+    key: str
+    label: str
+
+
+# Postes de dépense comparés, dérivés des agrégats OFGL. `key` est le nom
+# canonique utilisé dans tout le code ; `label` est le libellé affiché dans
+# le rapport. Modifier cette liste ne nécessite aucun changement de code
+# ailleurs (scoring et rapport itèrent dessus).
+DEFAULT_SPENDING_ITEMS: tuple[SpendingItem, ...] = (
+    SpendingItem("charges_de_fonctionnement", "Charges de fonctionnement"),
+    SpendingItem("charges_de_personnel", "Charges de personnel"),
+    SpendingItem("achats_et_charges_externes", "Achats et charges externes"),
+    SpendingItem("depenses_d_equipement", "Dépenses d'équipement"),
+    SpendingItem("encours_de_dette", "Encours de la dette"),
+)
+
+
+@dataclass(frozen=True)
+class OfglApiSettings:
+    """Paramètres d'accès aux jeux OFGL (data.ofgl.fr, API OpenDataSoft v2.1, endpoint "records").
+
+    GET {base_url}/api/explore/v2.1/catalog/datasets/{dataset_id}/records?where=...
+    """
+
+    base_url: str = "https://data.ofgl.fr"
+    dataset_communes: str = "ofgl-base-communes"
+    dataset_communes_consolidee: str = "ofgl-base-communes-consolidee"
+    request_timeout_seconds: float = 30.0
+    max_retries: int = 3
+    retry_backoff_seconds: float = 1.0
+    max_records_per_query: int = 2_000
+
+
+# Alias candidats (en minuscules, sans accents) pour identifier les champs
+# significatifs dans les enregistrements OFGL reçus, quel que soit leur nom
+# exact. Seuls "insee" et "strate" sont confirmés (utilisés dans les clauses
+# `where` des requêtes) ; le reste du schéma doit être complété avec les
+# vrais noms de champs constatés au premier appel réel (voir
+# balise.ingestion.ofgl.describe_schema).
+OFGL_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
+    "code_insee": ("insee", "code_insee", "codeinsee", "code_geographique"),
+    "siren": ("siren", "siren_collectivite"),
+    "exercice": ("exercice", "annee", "an"),
+    "population": ("population", "population_totale", "pop_totale"),
+    "strate": ("tranche_population", "strate", "categorie"),
+    "code_departement": ("dep_code", "code_dep", "departement_code", "code_departement"),
+    "code_region": ("reg_code", "code_reg", "region_code", "code_region"),
+    "agregat": ("agregat", "agregat_name", "libelle_agregat", "nomenclature"),
+    "montant": ("montant", "valeur", "montant_euros"),
+}
+
+# Alias candidats (sous-chaînes, comparaison insensible à la casse/accents)
+# pour repérer, dans un jeu au format long (colonne "agregat" + "montant"),
+# la ligne correspondant à chaque poste de dépense canonique. À valider et
+# recaler au premier chargement réel.
+OFGL_AGGREGATE_ALIASES: dict[str, tuple[str, ...]] = {
+    "charges_de_fonctionnement": ("charges de fonctionnement", "charges courantes de fonctionnement"),
+    "charges_de_personnel": ("charges de personnel", "charges de personnel et frais assimiles"),
+    "achats_et_charges_externes": ("achats et charges externes",),
+    "depenses_d_equipement": ("depenses d'equipement", "depenses d equipement"),
+    "encours_de_dette": ("encours de la dette", "encours de dette au 31/12"),
+}
+
+
+@dataclass(frozen=True)
+class DecpApiSettings:
+    """Paramètres d'accès aux marchés publics DECP (API OpenDataSoft v2.1, endpoint "records").
+
+    GET {base_url}/api/explore/v2.1/catalog/datasets/{dataset_id}/records
+        ?where=acheteur_id like "{siren}"
+
+    Le jeu `decp_augmente` de data.economie.gouv.fr est signalé "obsolète"
+    sur certaines pages data.gouv.fr recensant les sources DECP ; il est
+    utilisé ici sur demande explicite, à défaut d'accès réseau pour vérifier
+    en direct une alternative (le jeu consolidé "format tabulaire" plus
+    récent, cf. balise.ingestion.decp docstring).
+    """
+
+    base_url: str = "https://data.economie.gouv.fr"
+    dataset_marches: str = "decp_augmente"
+    request_timeout_seconds: float = 30.0
+    max_retries: int = 3
+    retry_backoff_seconds: float = 1.0
+    max_records_per_query: int = 1_000
+    montant_minimum_pertinent: float = 40_000.0
+
+
+# Alias candidats pour identifier les champs significatifs dans les
+# enregistrements `decp_augmente` reçus. Seul "acheteur_id" est confirmé
+# (utilisé dans la clause `where` fournie) ; le reste doit être validé au
+# premier appel réel (voir balise.ingestion.decp.describe_schema).
+DECP_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
+    "id": ("id", "identifiant", "uid"),
+    "acheteur_id": ("acheteur_id", "id_acheteur", "siret_acheteur"),
+    "acheteur_nom": ("acheteur_nom", "nomacheteur", "nom_acheteur"),
+    "objet": ("objet",),
+    "code_cpv": ("codecpv", "code_cpv", "cpv"),
+    "montant": ("montant",),
+    "date_notification": ("datenotification", "date_notification"),
+    "titulaire_id": ("titulaire_id", "titulaire_id_1", "id_titulaire"),
+    "titulaire_denomination": (
+        "titulaire_denominationsociale",
+        "titulaire_denominationsociale_1",
+        "denominationsociale",
+        "nom_titulaire",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class CpvCode:
+    """Un préfixe de code CPV pertinent pour l'audit de dépenses communales."""
+
+    prefix: str
+    label: str
+
+
+# Liste de départ, non exhaustive, des familles de marchés les plus
+# pertinentes pour un audit de dépenses communales (prestations récurrentes,
+# comparables d'une commune à l'autre). Configurable : ajouter/retirer des
+# entrées ne nécessite aucun changement de code.
+DEFAULT_CPV_CODES: tuple[CpvCode, ...] = (
+    CpvCode("77300000", "Services d'entretien des espaces verts"),
+    CpvCode("90600000", "Services de nettoyage et de balayage des voies publiques"),
+    CpvCode("90500000", "Services liés aux déchets (collecte, traitement)"),
+    CpvCode("55520000", "Services de restauration collective"),
+    CpvCode("79713000", "Services de gardiennage et de sécurité"),
+    CpvCode("45233140", "Travaux d'entretien de voirie"),
+    CpvCode("50000000", "Services de réparation et d'entretien"),
+    CpvCode("65000000", "Services publics (eau, énergie)"),
+    CpvCode("71000000", "Services d'architecture, d'ingénierie et de contrôle"),
+    CpvCode("92000000", "Services récréatifs, culturels et sportifs"),
+)
+
+
+@dataclass(frozen=True)
 class Settings:
     cache_db_path: Path = DEFAULT_CACHE_DB_PATH
     cache_ttl_days: int = 30
     insee: InseeApiSettings = field(default_factory=InseeApiSettings)
+    ofgl: OfglApiSettings = field(default_factory=OfglApiSettings)
+    decp: DecpApiSettings = field(default_factory=DecpApiSettings)
     strates: tuple[StrateThreshold, ...] = DEFAULT_STRATES
     scoring: ScoringThresholds = field(default_factory=ScoringThresholds)
+    spending_items: tuple[SpendingItem, ...] = DEFAULT_SPENDING_ITEMS
+    cpv_codes: tuple[CpvCode, ...] = DEFAULT_CPV_CODES
 
 
 SETTINGS = Settings()

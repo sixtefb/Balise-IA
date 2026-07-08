@@ -1,8 +1,12 @@
 """Résolution commune -> code INSEE + métadonnées, via l'API Découpage administratif.
 
 Source : geo.api.gouv.fr (Etalab/DINUM), construite à partir du Code Officiel
-Géographique de l'INSEE. Pas de clé d'API requise. Documentation :
-https://geo.api.gouv.fr/decoupage-administratif/communes
+Géographique de l'INSEE. Pas de clé d'API requise. Deux appels successifs :
+
+    GET {base_url}/communes?codePostal={code_postal}&fields=...
+        -> liste des communes du code postal (désambiguïsation par nom en local)
+    GET {base_url}/communes/{code_insee}?fields=nom,code,siren,population
+        -> détail (SIREN notamment) de la commune retenue
 
 Les réponses brutes sont mises en cache localement (voir balise.storage.db)
 pour éviter de re-solliciter l'API à chaque exécution.
@@ -23,10 +27,11 @@ from balise.models import CommuneIdentity
 from balise.normalization.strates import strate_for_population
 from balise.storage.db import get_connection
 
-FIELDS = (
-    "nom,code,codesPostaux,siren,population,surface,"
+LIST_FIELDS = (
+    "nom,code,codesPostaux,population,surface,"
     "codeDepartement,departement,codeRegion,region,codeEpci,epci"
 )
+DETAIL_FIELDS = "nom,code,siren,population"
 
 
 class InseeError(Exception):
@@ -71,28 +76,34 @@ def resolve_commune(
         if cached_payload is not None:
             return _identity_from_payload(cached_payload)
 
-    payload = _fetch_from_api(nom, code_postal, settings)
+    candidates = _fetch_list_by_code_postal(code_postal, settings)
+    selected = _select_result(candidates, nom, code_postal)
+    detail = _fetch_detail_by_code_insee(selected["code"], settings)
+    payload = {**selected, **detail}
+
     _write_cache(con, nom_key, code_postal, payload)
     return _identity_from_payload(payload)
 
 
-def _fetch_from_api(nom: str, code_postal: str, settings: Settings) -> dict:
+def _fetch_list_by_code_postal(code_postal: str, settings: Settings) -> list[dict]:
     url = f"{settings.insee.base_url}/communes"
-    params = {
-        "nom": nom,
-        "codePostal": code_postal,
-        "fields": FIELDS,
-        "boost": "population",
-        "format": "json",
-    }
+    params = {"codePostal": code_postal, "fields": LIST_FIELDS, "format": "json"}
+    return _get_json_with_retries(url, params, settings)
 
+
+def _fetch_detail_by_code_insee(code_insee: str, settings: Settings) -> dict:
+    url = f"{settings.insee.base_url}/communes/{code_insee}"
+    params = {"fields": DETAIL_FIELDS, "format": "json"}
+    return _get_json_with_retries(url, params, settings)
+
+
+def _get_json_with_retries(url: str, params: dict, settings: Settings):
     last_error: Exception | None = None
     for attempt in range(1, settings.insee.max_retries + 1):
         try:
             response = requests.get(url, params=params, timeout=settings.insee.request_timeout_seconds)
             response.raise_for_status()
-            results = response.json()
-            return _select_result(results, nom, code_postal)
+            return response.json()
         except (requests.RequestException, ValueError) as exc:
             last_error = exc
             if attempt < settings.insee.max_retries:
