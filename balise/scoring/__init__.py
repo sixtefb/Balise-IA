@@ -41,10 +41,20 @@ class SpendingItemScore:
     commune_par_habitant: float | None
     peer_median_par_habitant: float | None
     peer_count: int
+    peer_values: tuple[float, ...]  # €/habitant de chaque pair, pour affichage de distribution
     z_score: float | None
     delta_pct: float | None  # (commune - médiane pairs) / médiane pairs
     qualification: str  # "efficient" | "conforme" | "a_surveiller" | "alerte" | "donnee_absente"
     item_score: int | None  # 0-100, None si donnee_absente
+
+
+@dataclass(frozen=True)
+class PeerCommune:
+    """Une commune du groupe de comparaison (identité minimale, pour affichage)."""
+
+    code_insee: str
+    nom: str | None
+    population: float | None
 
 
 @dataclass(frozen=True)
@@ -58,6 +68,7 @@ class CommuneScoreCard:
     global_score: int
     verdict: str  # "Efficace" | "Vigilance" | "Alerte"
     items: tuple[SpendingItemScore, ...]
+    peers: tuple[PeerCommune, ...]
 
 
 def _qualify(z_score: float, thresholds=SETTINGS.scoring) -> str:
@@ -133,6 +144,7 @@ def score_commune(
                     commune_par_habitant=commune_value,
                     peer_median_par_habitant=median(peer_values) if peer_values else None,
                     peer_count=len(peer_values),
+                    peer_values=tuple(peer_values),
                     z_score=None,
                     delta_pct=None,
                     qualification="donnee_absente",
@@ -154,6 +166,7 @@ def score_commune(
                 commune_par_habitant=commune_value,
                 peer_median_par_habitant=peer_median,
                 peer_count=len(peer_values),
+                peer_values=tuple(peer_values),
                 z_score=z_score,
                 delta_pct=delta_pct,
                 qualification=_qualify(z_score, settings.scoring),
@@ -164,6 +177,17 @@ def score_commune(
     scored = [it.item_score for it in items if it.item_score is not None]
     global_score = round(mean(scored)) if scored else 50
 
+    peer_communes = tuple(
+        sorted(
+            (
+                PeerCommune(code_insee=p["code_insee"], nom=p.get("nom"), population=p.get("population"))
+                for p in peers
+            ),
+            key=lambda p: p.population or 0,
+            reverse=True,
+        )
+    )
+
     return CommuneScoreCard(
         code_insee=code_insee,
         exercice=exercice,
@@ -172,4 +196,5 @@ def score_commune(
         global_score=global_score,
         verdict=_verdict(global_score),
         items=tuple(items),
+        peers=peer_communes,
     )

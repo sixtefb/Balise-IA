@@ -89,12 +89,29 @@ FLASK_DEBUG=1 python server.py   # rechargement auto pendant le développement
 
 Page unique (`static/index.html` + `static/app.js`, JS natif sans
 framework/build step) : saisie commune/code postal → appel de
-`GET /api/audit` → rapport (score, écarts par poste de dépense vs strate,
-marchés publics DECP notables) → export XLSX (`static/vendor/exceljs.min.js`,
+`GET /api/audit` → rapport → export XLSX (`static/vendor/exceljs.min.js`,
 généré côté client, aucune donnée envoyée à un service tiers). Le cache
 DuckDB local (`data/cache/`) rend les analyses répétées quasi instantanées
 après le premier appel (~30s la première fois, réseau national OFGL/DECP
 compris).
+
+Contenu du rapport :
+- **Score global + 5 postes de dépense** comparés à la strate démographique
+  (z-score, écart en %), chacun avec un **histogramme de distribution du
+  groupe de pairs** (pas juste une barre d'écart : la forme de la
+  distribution — étalée, resserrée, avec valeurs extrêmes — est visible, et
+  la position de la commune dedans aussi).
+- **Liste des communes comparées** (nom + population), accessible en
+  cliquant sur "Comparé à N communes".
+- **Marchés publics DECP** regroupés par référence de marché détectée dans
+  l'objet (`GET /api/audit`, champ `marches_notables[].lot_count`) : un
+  marché alloti en plusieurs lots (un par corps de métier) apparaît comme
+  une seule entrée avec son nombre de lots et la liste des titulaires,
+  plutôt que de se répéter à l'identique dans la liste.
+- **Évolution du score sur plusieurs exercices**, chargée à la demande
+  (bouton "Voir l'évolution", 3/5/10 ans) via `GET /api/audit/history` :
+  chaque année interrogée = un nouvel appel national à OFGL (~10-20s non
+  caché), volontairement pas chargé automatiquement à chaque audit.
 
 ## Tests
 

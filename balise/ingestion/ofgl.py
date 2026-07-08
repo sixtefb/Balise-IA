@@ -155,6 +155,7 @@ def _pivot_records(records: list[dict], exercice: int | None = None) -> dict[str
     reg_field = _try_resolve_field(sample_fields, "code_region")
     exercice_field = _try_resolve_field(sample_fields, "exercice")
     strate_field = _try_resolve_field(sample_fields, "strate")
+    nom_field = _try_resolve_field(sample_fields, "commune_nom")
     type_budget_field = _try_resolve_field(sample_fields, "type_de_budget")
     agregat_field = _resolve_field(sample_fields, "agregat")
     montant_field = _resolve_field(sample_fields, "montant")
@@ -193,6 +194,7 @@ def _pivot_records(records: list[dict], exercice: int | None = None) -> dict[str
                     str(record.get(reg_field)).strip() if reg_field and record.get(reg_field) is not None else None
                 ),
                 "strate": record.get(strate_field) if strate_field else None,
+                "nom": record.get(nom_field) if nom_field else None,
             },
         )
 

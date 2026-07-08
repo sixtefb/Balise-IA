@@ -21,6 +21,7 @@ from balise.pipeline import (
     InseeError,
     audit_to_dict,
     run_audit,
+    run_history,
 )
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -61,6 +62,34 @@ def api_audit():
         return jsonify({"error": f"Erreur de calcul du score : {exc}"}), 502
 
     return jsonify(audit_to_dict(result))
+
+
+@app.get("/api/audit/history")
+def api_audit_history():
+    commune_nom = (request.args.get("commune") or "").strip()
+    code_postal = (request.args.get("code_postal") or "").strip()
+    years_raw = request.args.get("years", "5")
+
+    if not commune_nom or not code_postal:
+        return jsonify({"error": "Paramètres 'commune' et 'code_postal' requis."}), 400
+
+    try:
+        years = int(years_raw)
+    except ValueError:
+        return jsonify({"error": "'years' doit être un entier."}), 400
+
+    try:
+        result = run_history(commune_nom, code_postal, years=years)
+    except CommuneAmbiguousError as exc:
+        return jsonify({"error": str(exc)}), 409
+    except CommuneNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except InseeError as exc:
+        return jsonify({"error": f"Erreur INSEE : {exc}"}), 502
+    except AuditError as exc:
+        return jsonify({"error": f"Erreur de calcul de l'historique : {exc}"}), 502
+
+    return jsonify(result)
 
 
 if __name__ == "__main__":

@@ -118,6 +118,7 @@ OFGL_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "agregat": ("agregat", "agregat_name", "libelle_agregat", "nomenclature"),
     "montant": ("montant", "valeur", "montant_euros"),
     "type_de_budget": ("type_de_budget", "typebudget", "budget_type"),
+    "commune_nom": ("com_name", "commune_nom", "nom_commune"),
 }
 
 # Valeur attendue (comparaison exacte, normalisée) du champ "type_de_budget"

@@ -30,6 +30,17 @@
   .btn-export { display: flex; align-items: center; gap: 7px; padding: 8px 14px; background: #2b3a4a; border: 1px solid #2b3a4a; color: #fff; font-size: 13px; font-weight: 500; cursor: pointer; }
   .btn-export:hover { background: #16202b; }
   .field-input { font-family: inherit; font-size: 15px; color: #1c1d21; padding: 11px 12px; border: 1px solid #d5d4ce; background: #fbfaf7; width: 100%; }
+  .strate-link { font-size: 13.5px; color: #2b3a4a; background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; font-family: inherit; }
+  .strate-link:hover { color: #16202b; }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(28,29,33,.45); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 24px; }
+  .modal-box { background: #fff; max-width: 520px; width: 100%; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,.2); }
+  .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid #e2e1db; }
+  .modal-close { background: none; border: none; font-size: 20px; line-height: 1; cursor: pointer; color: #8a8c94; padding: 4px; }
+  .modal-close:hover { color: #1c1d21; }
+  .modal-body { overflow-y: auto; padding: 8px 22px 18px; }
+  .peer-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid #eceae4; font-size: 14px; }
+  .peer-row .pop { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #8a8c94; }
+  .select-years { font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 6px 10px; border: 1px solid #d5d4ce; background: #fbfaf7; color: #1c1d21; }
 </style>
 </head>
 <body>
@@ -112,7 +123,7 @@
         <h1 id="report-ville" style="font-size:38px; font-weight:700; letter-spacing:-0.02em; margin:0 0 8px; line-height:1;"></h1>
         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
           <span id="report-cp" class="mono" style="font-size:12px; color:#1c1d21; background:#eceae4; padding:3px 8px;"></span>
-          <span id="report-strate" style="font-size:13.5px; color:#565861;"></span>
+          <span style="font-size:13.5px; color:#565861;">Comparé à <button id="btn-peer-list" class="strate-link"></button></span>
         </div>
       </div>
       <div id="report-date" class="mono" style="font-size:11.5px; color:#9a9b9f; text-align:right;"></div>
@@ -135,9 +146,28 @@
     </div>
 
     <div style="padding:34px 0; border-bottom:1px solid #e2e1db;">
+      <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:6px; flex-wrap:wrap; gap:10px;">
+        <h2 style="font-size:19px; font-weight:700; letter-spacing:-0.01em; margin:0;">Évolution du score</h2>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <select id="select-years" class="select-years">
+            <option value="3">3 ans</option>
+            <option value="5" selected>5 ans</option>
+            <option value="10">10 ans</option>
+          </select>
+          <button id="btn-evolution" class="btn-secondary">Voir l'évolution</button>
+        </div>
+      </div>
+      <p class="mono" style="font-size:11px; color:#9a9b9f; margin:0 0 14px;">Chargé à la demande — une requête par année (peut prendre 10-20s/an la première fois).</p>
+      <div id="evolution-loading" class="hidden mono" style="font-size:13px; color:#8a8c94; padding:20px 0;">Chargement…</div>
+      <div id="evolution-error" class="hidden" style="font-size:13.5px; color:#8f3826; padding:10px 0;"></div>
+      <div id="evolution-chart"></div>
+      <div id="evolution-table-wrap" style="overflow-x:auto;"></div>
+    </div>
+
+    <div style="padding:34px 0; border-bottom:1px solid #e2e1db;">
       <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:22px;">
         <h2 style="font-size:19px; font-weight:700; letter-spacing:-0.01em; margin:0;">Efficacité par catégorie</h2>
-        <span class="mono" style="font-size:11px; color:#9a9b9f;">écart vs médiane de strate</span>
+        <span class="mono" style="font-size:11px; color:#9a9b9f;">écart vs médiane de strate, distribution du groupe de comparaison</span>
       </div>
       <div id="categories-list"></div>
     </div>
@@ -164,6 +194,19 @@
 
     <p class="mono" style="font-size:11px; line-height:1.6; color:#a8a9af; margin:24px 0 0; padding-top:20px; border-top:1px solid #e2e1db;">Sources&nbsp;: comptes individuels des communes (DGFiP/OFGL), marchés publics DECP, geo.api.gouv.fr. Ces écarts statistiques ne constituent pas, en eux-mêmes, la preuve d'une malversation : ce sont des pistes de vérification.</p>
 
+  </div>
+</div>
+
+<!-- ============ MODAL LISTE DES COMMUNES COMPARÉES ============ -->
+<div id="modal-peers" class="modal-backdrop hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span style="font-size:15px; font-weight:700;">Communes du groupe de comparaison</span>
+      <button id="modal-peers-close" class="modal-close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="modal-peers-list"></div>
+    </div>
   </div>
 </div>
 
