@@ -117,7 +117,19 @@ OFGL_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "code_region": ("reg_code", "code_reg", "region_code", "code_region"),
     "agregat": ("agregat", "agregat_name", "libelle_agregat", "nomenclature"),
     "montant": ("montant", "valeur", "montant_euros"),
+    "type_de_budget": ("type_de_budget", "typebudget", "budget_type"),
 }
+
+# Valeur attendue (comparaison exacte, normalisée) du champ "type_de_budget"
+# identifiant le budget principal d'une commune, par opposition à ses
+# budgets annexes (services distincts : régie de l'eau, portage de repas...).
+# Seul le budget principal est retenu pour les agrégats financiers de la
+# commune : mélanger les deux ferait écraser silencieusement un agrégat du
+# budget principal par la même ligne d'un budget annexe (souvent à 0).
+OFGL_BUDGET_PRINCIPAL_VALUE = "budget principal"
+# Même valeur, avec la casse exacte constatée dans l'API (utilisée pour
+# construire une clause `where=type_de_budget="..."` côté serveur).
+OFGL_BUDGET_PRINCIPAL_LABEL = "Budget principal"
 
 # Alias candidats (comparaison EXACTE, insensible à la casse/accents) pour
 # repérer, dans un jeu au format long (colonne "agregat" + "montant"), la
@@ -140,6 +152,37 @@ OFGL_AGGREGATE_ALIASES: dict[str, tuple[str, ...]] = {
     "achats_et_charges_externes": ("achats et charges externes",),
     "depenses_d_equipement": ("depenses d'equipement", "depenses d equipement"),
     "encours_de_dette": ("encours de dette", "encours de la dette", "encours de dette au 31/12"),
+}
+
+# Libellés exacts (accents/casse d'origine) des agrégats OFGL, confirmés par
+# appel réel, utilisés pour restreindre côté serveur (clause `where=agregat
+# in (...)`) le volume récupéré lors de la construction d'un groupe de
+# comparaison national. Sans ce filtre, une requête par strate seule renvoie
+# des centaines de milliers de lignes (tous agrégats x tous exercices x tous
+# budgets confondus) et dépasse largement `max_records_per_query`.
+OFGL_AGGREGATE_QUERY_LABELS: dict[str, str] = {
+    "charges_de_fonctionnement": "Dépenses de fonctionnement",
+    "charges_de_personnel": "Frais de personnel",
+    "achats_et_charges_externes": "Achats et charges externes",
+    "depenses_d_equipement": "Dépenses d'équipement",
+    "encours_de_dette": "Encours de dette",
+}
+
+# Signification des codes "tranche_population" (champ `strate` résolu) du
+# dataset OFGL, confirmée via la description du champ à l'API (appel réel) :
+# libellé humain de chaque strate démographique officielle DGCL/OFGL.
+OFGL_STRATE_LABELS: dict[str, str] = {
+    "0": "moins de 100 habitants",
+    "1": "100 à 199 habitants",
+    "2": "200 à 499 habitants",
+    "3": "500 à 1 999 habitants",
+    "4": "2 000 à 3 499 habitants",
+    "5": "3 500 à 4 999 habitants",
+    "6": "5 000 à 9 999 habitants",
+    "7": "10 000 à 19 999 habitants",
+    "8": "20 000 à 49 999 habitants",
+    "9": "50 000 à 99 999 habitants",
+    "10": "100 000 habitants et plus",
 }
 
 

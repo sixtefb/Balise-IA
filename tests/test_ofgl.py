@@ -69,7 +69,11 @@ def fake_fetch(monkeypatch):
         calls.append(where)
         if where == 'insee="27681"':
             return VERNON_RECORDS
-        if where == 'tranche_population="20000-49999"':
+        # Le where= du groupe de pairs est composite (budget principal +
+        # agrégats connus + exercice) : on ne vérifie que le préfixe
+        # correspondant à la strate demandée, pour ne pas dupliquer ici le
+        # détail de sa construction (balise.ingestion.ofgl).
+        if where and where.startswith('tranche_population="20000-49999"'):
             return STRATE_RECORDS
         return []
 

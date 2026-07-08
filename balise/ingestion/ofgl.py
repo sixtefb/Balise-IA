@@ -25,7 +25,15 @@ from __future__ import annotations
 
 import unicodedata
 
-from balise.config import OFGL_AGGREGATE_ALIASES, OFGL_COLUMN_ALIASES, SETTINGS, Settings
+from balise.config import (
+    OFGL_AGGREGATE_ALIASES,
+    OFGL_AGGREGATE_QUERY_LABELS,
+    OFGL_BUDGET_PRINCIPAL_LABEL,
+    OFGL_BUDGET_PRINCIPAL_VALUE,
+    OFGL_COLUMN_ALIASES,
+    SETTINGS,
+    Settings,
+)
 from balise.ingestion._opendatasoft import OpenDataSoftError, fetch_records
 from balise.storage.db import get_connection, read_query_cache, write_query_cache
 
@@ -146,6 +154,8 @@ def _pivot_records(records: list[dict], exercice: int | None = None) -> dict[str
     dep_field = _try_resolve_field(sample_fields, "code_departement")
     reg_field = _try_resolve_field(sample_fields, "code_region")
     exercice_field = _try_resolve_field(sample_fields, "exercice")
+    strate_field = _try_resolve_field(sample_fields, "strate")
+    type_budget_field = _try_resolve_field(sample_fields, "type_de_budget")
     agregat_field = _resolve_field(sample_fields, "agregat")
     montant_field = _resolve_field(sample_fields, "montant")
 
@@ -154,6 +164,16 @@ def _pivot_records(records: list[dict], exercice: int | None = None) -> dict[str
         if exercice is not None and exercice_field is not None:
             record_exercice = _parse_number(record.get(exercice_field))
             if record_exercice is not None and int(record_exercice) != int(exercice):
+                continue
+
+        # Ne retenir que le budget principal pour les agrégats financiers de
+        # la commune : un budget annexe (régie, portage de repas...) partage
+        # les mêmes libellés d'agrégat, avec ses propres montants (souvent 0
+        # ou sans rapport), et écraserait silencieusement la valeur du budget
+        # principal si les deux étaient mélangés dans la même entrée.
+        if type_budget_field is not None:
+            budget_value = _normalize(record.get(type_budget_field) or "")
+            if budget_value != OFGL_BUDGET_PRINCIPAL_VALUE:
                 continue
 
         code_insee_value = str(record.get(code_insee_field) or "").strip()
@@ -172,6 +192,7 @@ def _pivot_records(records: list[dict], exercice: int | None = None) -> dict[str
                 "code_region": (
                     str(record.get(reg_field)).strip() if reg_field and record.get(reg_field) is not None else None
                 ),
+                "strate": record.get(strate_field) if strate_field else None,
             },
         )
 
@@ -210,9 +231,22 @@ def get_peer_group_financial_data(
     Le filtrage par département/région se fait côté client (après réception),
     faute de connaître avec certitude le nom exact du champ correspondant
     pour l'inclure dans la clause `where` envoyée à l'API.
+
+    La requête est volontairement restreinte côté serveur (budget principal
+    uniquement, agrégats connus uniquement, exercice si fourni) : une
+    requête par strate seule renvoie des centaines de milliers de lignes à
+    l'échelle nationale (tous agrégats x tous exercices x tous budgets),
+    largement au-delà de `max_records_per_query`.
     """
     dataset_id = _dataset_id(dataset, settings)
-    where = f'tranche_population="{strate_value}"'
+    agregat_values = ", ".join(f'"{label}"' for label in OFGL_AGGREGATE_QUERY_LABELS.values())
+    where = (
+        f'tranche_population="{strate_value}" '
+        f'and type_de_budget="{OFGL_BUDGET_PRINCIPAL_LABEL}" '
+        f"and agregat in ({agregat_values})"
+    )
+    if exercice is not None:
+        where += f" and year(exer)={int(exercice)}"
     records = _fetch_cached(dataset_id, where, settings)
     by_commune = _pivot_records(records, exercice=exercice)
 
