@@ -95,6 +95,32 @@ DuckDB local (`data/cache/`) rend les analyses répétées quasi instantanées
 après le premier appel (~30s la première fois, réseau national OFGL/DECP
 compris).
 
+**Écran d'accueil : recherche ou carte de France** (`static/map.js`). En plus
+du formulaire commune/code postal (qui reste l'entrée principale), un second
+chemin : cliquer une région sur une carte de France cliquable fait apparaître
+la liste de ses communes de plus de 10 000 habitants (triée par population
+décroissante), cliquer une commune remplit automatiquement le formulaire.
+- `GET /api/communes` (`balise.ingestion.insee.list_communes_above_population`)
+  liste les communes filtrées par population. `geo.api.gouv.fr` ne supporte
+  pas de filtre serveur par population (paramètre silencieusement ignoré,
+  constaté en direct) : le filtrage se fait donc côté client sur la liste
+  complète (~35 000 communes en un seul appel, pas de pagination sur cette
+  API), puis le résultat filtré (1067 communes ≥ 10 000 hab.) est mis en
+  cache comme le reste.
+- Le tracé des 13 régions métropolitaines (`static/data/regions.geojson`,
+  99,5 Ko, coordonnées arrondies à 4 décimales soit ~11 m de précision,
+  largement suffisant pour une carte cliquable) vient du dépôt public
+  [gregoiredavid/france-geojson](https://github.com/gregoiredavid/france-geojson) :
+  `geo.api.gouv.fr` expose bien le contour d'une commune (`fields=contour`)
+  mais pas celui d'une région (champ silencieusement absent de la réponse).
+- Projection et rendu SVG faits à la main en JS (pas de librairie de
+  cartographie) : projection équirectangulaire corrigée par le cosinus de la
+  latitude moyenne, tracé des polygones/multipolygones GeoJSON en chemins
+  SVG.
+- Testé en Playwright de bout en bout : Île-de-France → Paris (rapport
+  généré, score 0/100 « Alerte », 41 communes du même groupe de pairs) et
+  Bretagne → Lorient (rapport généré avec succès).
+
 Contenu du rapport :
 - **Score global + 7 postes de dépense** comparés à la strate démographique
   (z-score, écart en %), chacun avec un **histogramme de distribution du

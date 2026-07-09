@@ -14,6 +14,7 @@ import os
 
 from flask import Flask, jsonify, request, send_from_directory
 
+from balise.ingestion.insee import list_communes_above_population
 from balise.pipeline import (
     AuditError,
     CommuneAmbiguousError,
@@ -99,6 +100,36 @@ def api_audit_history():
         return jsonify({"error": f"Erreur de calcul de l'historique : {exc}"}), 502
 
     return jsonify(result)
+
+
+@app.get("/api/communes")
+def api_communes():
+    """Communes de plus de 10 000 habitants (par défaut), pour la sélection par carte."""
+    min_population_raw = request.args.get("min_population", "10000")
+    try:
+        min_population = int(min_population_raw)
+    except ValueError:
+        return jsonify({"error": "'min_population' doit être un entier."}), 400
+
+    try:
+        communes = list_communes_above_population(min_population)
+    except InseeError as exc:
+        return jsonify({"error": f"Erreur INSEE : {exc}"}), 502
+
+    return jsonify(
+        [
+            {
+                "code_insee": c.get("code"),
+                "nom": c.get("nom"),
+                "code_postal": (c.get("codesPostaux") or [None])[0],
+                "population": c.get("population"),
+                "code_region": c.get("codeRegion"),
+                "lon": (c.get("centre") or {}).get("coordinates", [None, None])[0],
+                "lat": (c.get("centre") or {}).get("coordinates", [None, None])[1],
+            }
+            for c in communes
+        ]
+    )
 
 
 if __name__ == "__main__":

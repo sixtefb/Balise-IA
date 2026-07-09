@@ -25,7 +25,7 @@ import requests
 from balise.config import SETTINGS, Settings
 from balise.models import CommuneIdentity
 from balise.normalization.strates import strate_for_population
-from balise.storage.db import get_connection
+from balise.storage.db import get_connection, read_query_cache, write_query_cache
 
 LIST_FIELDS = (
     "nom,code,codesPostaux,population,surface,"
@@ -83,6 +83,40 @@ def resolve_commune(
 
     _write_cache(con, nom_key, code_postal, payload)
     return _identity_from_payload(payload)
+
+
+def list_communes_above_population(
+    min_population: int = 10_000,
+    settings: Settings = SETTINGS,
+) -> list[dict]:
+    """Communes françaises dont la population dépasse le seuil donné.
+
+    Utilisé pour la sélection par carte de l'interface (choisir une région
+    puis une commune dedans) : indépendant de toute résolution individuelle
+    de commune. `geo.api.gouv.fr` ne supporte pas de filtre serveur par
+    population (paramètre silencieusement ignoré, constaté en direct) — le
+    filtrage se fait donc côté client sur la liste complète (~35 000
+    communes, une seule requête, pas de pagination sur cette API). Mis en
+    cache comme le reste (TTL `settings.cache_ttl_days`) : cette liste ne
+    change quasiment jamais.
+
+    Champs retournés par commune : nom, code (INSEE), codesPostaux,
+    population, codeRegion, centre (point GeoJSON {type, coordinates}).
+    """
+    con = get_connection(settings)
+    cache_key = f"insee:communes_above:{min_population}"
+
+    cached = read_query_cache(con, cache_key, settings.cache_ttl_days)
+    if cached is not None:
+        return cached
+
+    url = f"{settings.insee.base_url}/communes"
+    params = {"fields": "nom,code,codesPostaux,population,codeRegion,centre", "format": "json"}
+    all_communes = _get_json_with_retries(url, params, settings)
+    filtered = [c for c in all_communes if (c.get("population") or 0) >= min_population]
+
+    write_query_cache(con, cache_key, filtered)
+    return filtered
 
 
 def _fetch_list_by_code_postal(code_postal: str, settings: Settings) -> list[dict]:
