@@ -585,3 +585,40 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 });
+
+// ---- Export PDF ----
+
+document.getElementById('btn-export-pdf').addEventListener('click', async () => {
+  if (!lastReport) return;
+  const btn = document.getElementById('btn-export-pdf');
+  const label = btn.querySelector('span');
+  const originalLabel = label.textContent;
+  btn.disabled = true;
+  label.textContent = '...';
+  try {
+    const data = lastReport;
+    const cp = data.commune.codes_postaux[0] || '';
+    let url = `/api/audit/pdf?commune=${encodeURIComponent(data.commune.nom)}&code_postal=${encodeURIComponent(cp)}`;
+    if (data.exercice) url += `&exercice=${encodeURIComponent(data.exercice)}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Erreur ${res.status}`);
+    }
+    const blob = await res.blob();
+    const safe = `${data.commune.nom} ${cp}`.replace(/[\\/:*?"<>|]/g, '');
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = `Balise IA - ${safe}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 2000);
+  } catch (err) {
+    alert(`Export PDF impossible : ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    label.textContent = originalLabel;
+  }
+});

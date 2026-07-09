@@ -11,8 +11,10 @@ Usage :
 from __future__ import annotations
 
 import os
+import re
+import unicodedata
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 from balise.ingestion.insee import list_communes_above_population
 from balise.pipeline import (
@@ -24,6 +26,7 @@ from balise.pipeline import (
     run_audit,
     run_history,
 )
+from balise.report.pdf import generate_pdf
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
@@ -72,6 +75,49 @@ def api_audit():
         return jsonify({"error": f"Erreur de calcul du score : {exc}"}), 502
 
     return jsonify(audit_to_dict(result))
+
+
+def _pdf_filename(commune_nom: str) -> str:
+    slug = unicodedata.normalize("NFKD", commune_nom)
+    slug = "".join(c for c in slug if not unicodedata.combining(c))
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", slug).strip("-").lower() or "commune"
+    return f"balise-ia-{slug}.pdf"
+
+
+@app.get("/api/audit/pdf")
+def api_audit_pdf():
+    commune_nom = (request.args.get("commune") or "").strip()
+    code_postal = (request.args.get("code_postal") or "").strip()
+    exercice_raw = request.args.get("exercice")
+
+    if not commune_nom or not code_postal:
+        return jsonify({"error": "Paramètres 'commune' et 'code_postal' requis."}), 400
+
+    exercice = None
+    if exercice_raw:
+        try:
+            exercice = int(exercice_raw)
+        except ValueError:
+            return jsonify({"error": "'exercice' doit être un entier (ex. 2023)."}), 400
+
+    try:
+        result = run_audit(commune_nom, code_postal, exercice=exercice)
+    except CommuneAmbiguousError as exc:
+        return jsonify({"error": str(exc)}), 409
+    except CommuneNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except InseeError as exc:
+        return jsonify({"error": f"Erreur INSEE : {exc}"}), 502
+    except AuditError as exc:
+        return jsonify({"error": f"Erreur de calcul du score : {exc}"}), 502
+
+    audit = audit_to_dict(result)
+    pdf_bytes = generate_pdf(audit)
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{_pdf_filename(result.commune.nom)}"'},
+    )
 
 
 @app.get("/api/audit/history")

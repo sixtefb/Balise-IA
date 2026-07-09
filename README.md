@@ -90,10 +90,40 @@ FLASK_DEBUG=1 python server.py   # rechargement auto pendant le développement
 Page unique (`static/index.html` + `static/app.js`, JS natif sans
 framework/build step) : saisie commune/code postal → appel de
 `GET /api/audit` → rapport → export XLSX (`static/vendor/exceljs.min.js`,
-généré côté client, aucune donnée envoyée à un service tiers). Le cache
-DuckDB local (`data/cache/`) rend les analyses répétées quasi instantanées
-après le premier appel (~30s la première fois, réseau national OFGL/DECP
-compris).
+généré côté client, aucune donnée envoyée à un service tiers) ou export PDF
+(généré côté serveur, voir ci-dessous). Le cache DuckDB local
+(`data/cache/`) rend les analyses répétées quasi instantanées après le
+premier appel (~30s la première fois, réseau national OFGL/DECP compris).
+
+**Rapport PDF téléchargeable** (`balise/report/pdf.py`, endpoint
+`GET /api/audit/pdf`). Choix : `fpdf2`, pur Python — pas de dépendance
+système (contrairement à une conversion HTML→PDF via WeasyPrint, qui exige
+Pango/Cairo, absents de l'environnement de déploiement Render actuel et qui
+imposeraient de migrer vers un déploiement Docker). Les graphiques
+(anneau de score, barres d'écart, histogrammes de distribution) sont
+dessinés directement avec les primitives de dessin de `fpdf2`, en reprenant
+la charte graphique et la logique des graphiques SVG de `static/app.js`.
+Aucun calcul propre : le module met en forme le dict déjà produit par
+`audit_to_dict()`, chiffres inchangés — le PDF réutilise `run_audit()`
+(donc le cache DuckDB existant, pas de nouveau fetch réseau).
+- 7 pages en pratique (limite visée : 10 max) : couverture (score, verdict,
+  synthèse), méthodologie (calcul du z-score, seuils de qualification,
+  sources), vue d'ensemble des 7 postes, analyse détaillée des points de
+  vigilance (histogramme de distribution + position de la commune par
+  poste en alerte/à surveiller), marchés publics notables, démographie,
+  sources et limites méthodologiques.
+- Polices de base (Helvetica/Courier, pas de fichier de police à
+  embarquer) avec l'encodage `cp1252` plutôt que le `latin-1` par défaut de
+  `fpdf2`, pour couvrir le symbole € (absent de latin-1) sans changer de
+  police. Les caractères mal encodés en amont dans certains libellés DECP
+  (source ouverte, non contrôlable) sont remplacés à l'affichage plutôt que
+  de faire planter la génération (`_ReportPDF.normalize_text`) — aucune
+  valeur numérique n'est concernée.
+- Testé sur données réelles (Lorient : rapport complet 7 pages sans point
+  de vigilance ; Paris : 2 postes en alerte avec histogrammes détaillés,
+  8 marchés notables jusqu'à 144 M€, aucun plafond appliqué), et via
+  Playwright de bout en bout (clic sur "PDF Rapport" → téléchargement
+  réel du fichier depuis le navigateur).
 
 **Écran d'accueil : recherche ou carte de France** (`static/map.js`). En plus
 du formulaire commune/code postal (qui reste l'entrée principale), un second
