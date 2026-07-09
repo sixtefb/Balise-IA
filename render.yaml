@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: balise-ia
+    env: python
+    region: frankfurt
+    plan: starter
+    buildCommand: "pip install -r requirements.txt"
+    # 1 seul worker : DuckDB n'autorise qu'un seul processus en écriture à
+    # la fois sur le fichier de cache (data/cache/balise.duckdb). Plusieurs
+    # workers gunicorn écrivant en parallèle provoqueraient des erreurs de
+    # verrou. --timeout large pour couvrir un appel OFGL non caché sur une
+    # nouvelle strate/exercice (~20-30s) sans faire tuer le worker.
+    startCommand: "gunicorn server:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: BALISE_CACHE_DIR
+        value: /var/data
+    disk:
+      name: balise-cache-disk
+      mountPath: /var/data
+      sizeGB: 1

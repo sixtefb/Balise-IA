@@ -8,11 +8,21 @@ dans les modules d'ingestion, de scoring ou de rapport.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_CACHE_DB_PATH = PROJECT_ROOT / "data" / "cache" / "balise.duckdb"
+
+# Surchargeable via la variable d'environnement BALISE_CACHE_DIR (utile en
+# déploiement, ex. Render, pour pointer vers un disque persistant monté à un
+# chemin qui ne correspond pas forcément à PROJECT_ROOT/data/cache).
+_cache_dir_override = os.environ.get("BALISE_CACHE_DIR")
+DEFAULT_CACHE_DB_PATH = (
+    Path(_cache_dir_override) / "balise.duckdb"
+    if _cache_dir_override
+    else PROJECT_ROOT / "data" / "cache" / "balise.duckdb"
+)
 
 
 @dataclass(frozen=True)

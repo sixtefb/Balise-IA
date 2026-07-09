@@ -136,6 +136,43 @@ Contenu du rapport :
   n'a pas de données pour l'année demandée (couverture réelle : environ
   2014/2017 à aujourd'hui -1/-2 ans, délai de publication).
 
+## Déploiement (Render)
+
+**Vercel n'est pas adapté à cette appli** : ses fonctions serverless ont un
+timeout court (10-60s) et un système de fichiers éphémère, incompatible
+avec le cache DuckDB local et le fetch national "Entretien" qui prend ~2
+min à froid. Render (ou tout hébergeur supportant un process long-running
+avec disque persistant — Fly.io, Railway...) convient, lui, nativement.
+
+```bash
+git push  # ou connecter le repo sur render.com, "New +" -> "Blueprint"
+```
+
+`render.yaml` est fourni (Blueprint) : service web Python, `gunicorn`
+comme serveur de production, disque persistant monté sur `BALISE_CACHE_DIR`
+pour le cache DuckDB.
+
+Points d'attention :
+- **1 seul worker gunicorn** (`--workers 1` dans `render.yaml`) : DuckDB
+  n'autorise qu'un seul processus en écriture à la fois sur le fichier de
+  cache. Plusieurs workers en parallèle provoqueraient des erreurs de
+  verrou. Suffisant pour un usage à faible trafic ; à revoir (ex. bascule
+  vers une base supportant l'écriture concurrente) si le trafic augmente.
+- **Disque persistant** : nécessite un plan payant Render (le plan gratuit
+  n'inclut pas de disque persistant — `render.yaml` est réglé sur `starter`).
+  Sans disque persistant, l'appli fonctionne quand même, mais perd son
+  cache à chaque redémarrage/veille du service (le plan gratuit met le
+  service en veille après 15 min d'inactivité), ce qui peut faire
+  réapparaître le fetch "Entretien" de ~2 min à chaque réveil.
+- **Pré-chauffage automatique** : `server.py` lance en tâche de fond, dès
+  le démarrage du process, le fetch national "Entretien" (`scripts/warm_cache.py`
+  fait la même chose en script autonome, utilisable manuellement). Sans ça,
+  la toute première requête `/api/audit` reçue par le service paierait ces
+  ~2 min en plein milieu d'une requête HTTP, avec un vrai risque de timeout
+  côté proxy. Un appel OFGL non caché sur une nouvelle strate/exercice
+  (~20-30s) reste possible sur une requête individuelle — `--timeout 120`
+  dans `render.yaml` couvre ce cas.
+
 ## Tests
 
 ```bash
@@ -152,9 +189,11 @@ n'a pu être exécuté contre les vraies API depuis cet environnement.
 
 ```
 audit.py                       # point d'entrée CLI (fiche d'identité seule, étape 1/3)
-server.py                      # serveur Flask : sert static/ + GET /api/audit
+server.py                      # serveur Flask : sert static/ + GET /api/audit, pré-chauffe le cache "Entretien" au démarrage
+render.yaml                    # Blueprint de déploiement Render (voir section Déploiement)
 static/                        # interface web (JS natif, sans framework) : index.html, app.js, vendor/exceljs.min.js
 scripts/probe_apis.py          # sonde manuelle des 3 API, JSON brut, à lancer en premier
+scripts/warm_cache.py          # pré-chauffage manuel/CI du cache national "Entretien" (voir server.py et Déploiement)
 balise/
   config.py                    # tous les seuils/paramètres configurables (strates, scoring, cache, alias de champs)
   models.py                    # CommuneIdentity — couche "public benchmark"
