@@ -11,11 +11,9 @@ Usage :
 from __future__ import annotations
 
 import os
-import threading
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from balise.ingestion import decp
 from balise.pipeline import (
     AuditError,
     CommuneAmbiguousError,
@@ -30,29 +28,14 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="")
 
-
-def _warm_maintenance_cache() -> None:
-    """Pré-chauffe en tâche de fond le cache national "Entretien" (DECP, ~2 min).
-
-    Sans ça, c'est la toute première requête /api/audit reçue par le
-    service qui paierait ces ~2 min en plein milieu d'une requête HTTP
-    (risque de timeout côté proxy/plateforme). Lancé une fois au démarrage
-    du process ; sans effet si déjà en cache (TTL 30 jours) - dans ce cas la
-    fonction retourne en quelques centaines de ms, la requête ne fait que
-    lire le cache DuckDB local.
-
-    Ne pas lancer ceci avec plusieurs workers gunicorn en parallèle : DuckDB
-    n'autorise qu'un seul processus en écriture à la fois sur un même
-    fichier - d'où --workers 1 dans render.yaml. Avec un seul worker,
-    aucune concurrence possible sur ce fichier.
-    """
-    try:
-        decp.get_maintenance_spending_by_commune()
-    except decp.DecpError:
-        pass  # la requête réelle réessaiera ; ne doit jamais faire planter le démarrage.
-
-
-threading.Thread(target=_warm_maintenance_cache, daemon=True).start()
+# Le pré-chauffage du cache national "Entretien" (DECP, ~2 min) ne se fait
+# PAS ici. Une tentative précédente le lançait en tâche de fond au démarrage
+# du process : avec gunicorn en mode "sync" (un seul thread traite les
+# requêtes), ce travail long a fini par empêcher le worker de répondre au
+# signal de vie du maître, qui l'a tué (WORKER TIMEOUT -> SIGKILL) après
+# ~120s, plantant le service. Le pré-chauffage doit tourner en dehors du
+# process qui sert les requêtes HTTP — voir scripts/warm_cache.py, lancé en
+# pre-deploy (render.yaml) avant que le service ne prenne du trafic.
 
 
 @app.get("/")

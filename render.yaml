@@ -5,12 +5,24 @@ services:
     region: frankfurt
     plan: starter
     buildCommand: "pip install -r requirements.txt"
+    # Pré-chauffe le cache national "Entretien" (DECP, ~2 min) AVANT que le
+    # service ne prenne du trafic, dans un process séparé qui a le temps
+    # qu'il faut. Ne surtout pas faire ça en tâche de fond dans le process
+    # qui sert les requêtes : avec un seul worker gunicorn "sync", un
+    # pré-chauffage aussi long empêche le worker de répondre au signal de
+    # vie du maître, qui finit par le tuer (WORKER TIMEOUT -> SIGKILL,
+    # constaté en direct) - le service plante avant même sa première vraie
+    # requête. Échoue silencieusement si le réseau n'est pas dispo à cet
+    # instant (scripts/warm_cache.py) : le cache se remplira alors, plus
+    # lentement, à la première requête réelle qui en a besoin.
+    preDeployCommand: "python scripts/warm_cache.py"
     # 1 seul worker : DuckDB n'autorise qu'un seul processus en écriture à
     # la fois sur le fichier de cache (data/cache/balise.duckdb). Plusieurs
     # workers gunicorn écrivant en parallèle provoqueraient des erreurs de
     # verrou. --timeout large pour couvrir un appel OFGL non caché sur une
-    # nouvelle strate/exercice (~20-30s) sans faire tuer le worker.
-    startCommand: "gunicorn server:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120"
+    # nouvelle strate/exercice (~20-30s), avec une marge pour la latence
+    # réseau propre à l'infrastructure Render.
+    startCommand: "gunicorn server:app --bind 0.0.0.0:$PORT --workers 1 --timeout 180"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9

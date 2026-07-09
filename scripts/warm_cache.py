@@ -10,18 +10,26 @@ paierait ces ~2 min en plein milieu d'une requête HTTP (risque de dépasser
 le timeout du proxy). Ce script fait ce travail pendant le build/déploiement
 plutôt que pendant une requête utilisateur.
 
-Utilisé comme buildCommand par render.yaml. Volontairement silencieux sur
-les erreurs réseau : un échec ici ne doit pas bloquer le déploiement — le
-cache sera simplement reconstruit (plus lentement) à la première requête
-réelle si ce script n'a pas pu le pré-remplir.
+Utilisé comme preDeployCommand par render.yaml. Volontairement silencieux
+sur les erreurs réseau : un échec ici ne doit pas bloquer le déploiement —
+le cache sera simplement reconstruit (plus lentement) à la première
+requête réelle si ce script n'a pas pu le pré-remplir.
 """
 
 from __future__ import annotations
 
 import sys
 import time
+from pathlib import Path
 
-from balise.ingestion import decp
+# `python scripts/warm_cache.py` place scripts/ (pas la racine du projet)
+# en tête de sys.path : sans ceci, "from balise.ingestion import decp"
+# échoue avec ModuleNotFoundError dès que le script est lancé depuis un
+# autre répertoire de travail que la racine (constaté en direct en testant
+# la commande exacte utilisée par render.yaml).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from balise.ingestion import decp  # noqa: E402
 
 
 def main() -> int:

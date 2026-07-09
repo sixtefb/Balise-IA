@@ -145,33 +145,49 @@ min à froid. Render (ou tout hébergeur supportant un process long-running
 avec disque persistant — Fly.io, Railway...) convient, lui, nativement.
 
 ```bash
-git push  # ou connecter le repo sur render.com, "New +" -> "Blueprint"
+git push  # puis connecter le repo sur render.com, "New +" -> "Blueprint"
 ```
 
-`render.yaml` est fourni (Blueprint) : service web Python, `gunicorn`
-comme serveur de production, disque persistant monté sur `BALISE_CACHE_DIR`
-pour le cache DuckDB.
+`render.yaml` est fourni (Blueprint) : détecté automatiquement si tu passes
+par "New +" -> **Blueprint** (pas "Web Service", qui ignore ce fichier et
+demande de tout configurer à la main — voir plus bas si c'est déjà fait).
+Service web Python, `gunicorn` comme serveur de production, disque
+persistant monté sur `BALISE_CACHE_DIR` pour le cache DuckDB.
 
 Points d'attention :
-- **1 seul worker gunicorn** (`--workers 1` dans `render.yaml`) : DuckDB
-  n'autorise qu'un seul processus en écriture à la fois sur le fichier de
-  cache. Plusieurs workers en parallèle provoqueraient des erreurs de
-  verrou. Suffisant pour un usage à faible trafic ; à revoir (ex. bascule
-  vers une base supportant l'écriture concurrente) si le trafic augmente.
+- **1 seul worker gunicorn** (`--workers 1`) : DuckDB n'autorise qu'un seul
+  processus en écriture à la fois sur le fichier de cache. Plusieurs
+  workers en parallèle provoqueraient des erreurs de verrou. Suffisant pour
+  un usage à faible trafic ; à revoir (ex. bascule vers une base supportant
+  l'écriture concurrente) si le trafic augmente.
 - **Disque persistant** : nécessite un plan payant Render (le plan gratuit
   n'inclut pas de disque persistant — `render.yaml` est réglé sur `starter`).
   Sans disque persistant, l'appli fonctionne quand même, mais perd son
   cache à chaque redémarrage/veille du service (le plan gratuit met le
   service en veille après 15 min d'inactivité), ce qui peut faire
   réapparaître le fetch "Entretien" de ~2 min à chaque réveil.
-- **Pré-chauffage automatique** : `server.py` lance en tâche de fond, dès
-  le démarrage du process, le fetch national "Entretien" (`scripts/warm_cache.py`
-  fait la même chose en script autonome, utilisable manuellement). Sans ça,
-  la toute première requête `/api/audit` reçue par le service paierait ces
-  ~2 min en plein milieu d'une requête HTTP, avec un vrai risque de timeout
-  côté proxy. Un appel OFGL non caché sur une nouvelle strate/exercice
-  (~20-30s) reste possible sur une requête individuelle — `--timeout 120`
-  dans `render.yaml` couvre ce cas.
+- **Pré-chauffage via `preDeployCommand`** (`scripts/warm_cache.py`) : le
+  fetch national "Entretien" (~2 min) tourne **avant** que le service ne
+  prenne du trafic, dans un process séparé. Ne surtout pas le lancer en
+  tâche de fond dans le process qui sert les requêtes HTTP — une première
+  version faisait ça, et avec un seul worker gunicorn en mode "sync", ce
+  travail long empêchait le worker de répondre au signal de vie du maître,
+  qui le tuait (`[CRITICAL] WORKER TIMEOUT` puis `SIGKILL`) après ~120s :
+  le service plantait avant même sa première vraie requête (constaté en
+  déploiement réel). Un appel OFGL non caché sur une nouvelle
+  strate/exercice (~20-40s, marge réseau Render incluse) reste possible sur
+  une requête individuelle — `--timeout 180` dans `startCommand` couvre ce
+  cas.
+- **Si le service a été créé via "New +" -> "Web Service"** (pas
+  "Blueprint") : `render.yaml` n'est pas lu automatiquement, il faut
+  configurer à la main dans Settings :
+  - Build Command : `pip install -r requirements.txt`
+  - Pre-Deploy Command : `python scripts/warm_cache.py` (si ce champ
+    n'existe pas sur ton plan/UI, lance-le une fois manuellement via l'onglet
+    "Shell" après le premier déploiement)
+  - Start Command : `gunicorn server:app --bind 0.0.0.0:$PORT --workers 1 --timeout 180`
+  - Variable d'environnement `BALISE_CACHE_DIR` pointant vers le point de
+    montage du disque persistant (ex. `/var/data`)
 
 ## Tests
 
