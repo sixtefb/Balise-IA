@@ -197,8 +197,8 @@ def get_maintenance_spending_by_commune(settings: Settings = SETTINGS) -> dict[s
             continue
 
         for record in records:
-            code_insee = str(record.get(commune_field) or "").strip()
-            if not code_insee:
+            code_insee = _parse_code_insee(record.get(commune_field))
+            if code_insee is None:
                 continue
             montant = _parse_number(record.get(montant_field))
             if montant is None:
@@ -206,6 +206,26 @@ def get_maintenance_spending_by_commune(settings: Settings = SETTINGS) -> dict[s
             totals[code_insee] = totals.get(code_insee, 0.0) + montant
 
     return totals
+
+
+def _parse_code_insee(raw_value) -> str | None:
+    """Valide un code INSEE commune (5 caractères, "2A"/"2B" pour la Corse).
+
+    `codecommuneacheteur` contient parfois une valeur manquante sérialisée
+    en flottant NaN par la source ; `str(float('nan'))` vaut "nan", une
+    chaîne non vide qui passerait un simple test de troncature/vide et
+    agrégerait à tort des enregistrements sans rapport sous une fausse
+    "commune" (constaté en direct : plusieurs milliards d'euros cumulés sous
+    la clé "nan").
+    """
+    if raw_value is None:
+        return None
+    code = str(raw_value).strip()
+    if len(code) != 5:
+        return None
+    if code[:2] in ("2A", "2B"):
+        return code if code[2:].isdigit() else None
+    return code if code.isdigit() else None
 
 
 def describe_schema(siret_acheteur: str, settings: Settings = SETTINGS) -> dict:
