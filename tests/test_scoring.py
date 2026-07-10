@@ -137,3 +137,86 @@ def test_maintenance_item_degrades_gracefully_on_decp_error(monkeypatch):
     entretien = next(it for it in card.items if it.key == "entretien")
     assert entretien.qualification == "donnee_absente"
     assert entretien.item_score is None
+
+
+# ---- Affinement du groupe de pairs par population (strate OFGL "100 000+" ouverte) ----
+
+
+def _make_peers_with_population(populations: list[float]) -> list[dict]:
+    return [
+        {"code_insee": f"peer{i}", "nom": f"Peer{i}", "population": pop}
+        for i, pop in enumerate(populations)
+    ]
+
+
+def test_narrow_peer_group_no_narrowing_when_population_close_to_median():
+    # Toutes les populations sont dans un facteur 3 de la commune (200_000) : pas d'affinement.
+    peers = _make_peers_with_population([150_000.0 + i * 5_000 for i in range(20)])
+    result, refined, heterogeneous = scoring._narrow_peer_group_by_population(
+        200_000.0, peers, scoring.SETTINGS
+    )
+    assert result == peers
+    assert refined is False
+    assert heterogeneous is False
+
+
+def test_narrow_peer_group_narrows_when_enough_similar_peers_remain():
+    # 25 pairs très petites (tirent la médiane du groupe vers le bas, ratio > 3 avec la
+    # commune) + 15 pairs proches en ordre de grandeur de la commune (2_000_000) : assez
+    # pour resserrer sans repasser sous min_peer_group_size (15).
+    far_peers = _make_peers_with_population([50_000.0] * 25)
+    close_peers = _make_peers_with_population([1_000_000.0 + i * 10_000 for i in range(15)])
+    peers = far_peers + close_peers
+    result, refined, heterogeneous = scoring._narrow_peer_group_by_population(
+        2_000_000.0, peers, scoring.SETTINGS
+    )
+    assert refined is True
+    assert heterogeneous is False
+    assert len(result) == 15
+    assert all(p["population"] >= 1_000_000.0 for p in result)
+
+
+def test_narrow_peer_group_falls_back_when_not_enough_similar_peers():
+    # Seulement 3 pairs d'ordre de grandeur comparable à la commune (2_000_000) : pas assez
+    # pour resserrer (min_peer_group_size=15) -> groupe complet conservé, signalé hétérogène.
+    close_peers = _make_peers_with_population([1_800_000.0, 1_900_000.0, 2_100_000.0])
+    far_peers = _make_peers_with_population([120_000.0 + i * 1_000 for i in range(20)])
+    peers = close_peers + far_peers
+    result, refined, heterogeneous = scoring._narrow_peer_group_by_population(
+        2_000_000.0, peers, scoring.SETTINGS
+    )
+    assert result == peers
+    assert refined is False
+    assert heterogeneous is True
+
+
+def test_narrow_peer_group_noop_when_too_few_peers_to_judge():
+    # Moins de min_peer_group_size pairs au total : on ne tente même pas d'affiner.
+    peers = _make_peers_with_population([5_000.0, 6_000.0])
+    result, refined, heterogeneous = scoring._narrow_peer_group_by_population(
+        2_000_000.0, peers, scoring.SETTINGS
+    )
+    assert result == peers
+    assert refined is False
+    assert heterogeneous is False
+
+
+def test_score_commune_flags_heterogeneous_peer_group(monkeypatch):
+    outlier_commune = {**COMMUNE_DATA, "population": 2_000_000.0}
+    close_peers = _make_peers_with_population([1_800_000.0, 1_900_000.0])
+    far_peers = [
+        {**p, "population": 120_000.0 + i * 1_000}
+        for i, p in enumerate(PEERS * 4)  # 20 pairs, toutes petites
+    ]
+    all_peers = close_peers + far_peers
+
+    monkeypatch.setattr(scoring.ofgl, "get_financial_data", lambda code_insee, exercice=None, settings=None: (
+        outlier_commune if code_insee == "99999" else None
+    ))
+    monkeypatch.setattr(scoring.ofgl, "get_peer_group_financial_data", lambda strate_value, **kwargs: all_peers)
+    monkeypatch.setattr(scoring.decp, "get_maintenance_spending_by_commune", lambda settings=None: dict(MAINTENANCE_TOTALS))
+
+    card = scoring.score_commune("99999", exercice=2024)
+    assert card.peer_group_heterogeneous is True
+    assert card.peer_group_refined is False
+    assert card.peer_group_size == len(all_peers)

@@ -15,10 +15,10 @@ Ce module ne fait AUCUN calcul : il met en forme le dictionnaire produit par
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from fpdf import FPDF
-from fpdf.enums import XPos, YPos
+from fpdf.enums import MethodReturnValue, XPos, YPos
 
 # Palette reprise de static/index.html et static/app.js, pour une identité
 # visuelle cohérente entre le rapport web et le PDF.
@@ -69,6 +69,31 @@ def _fmt_pop(v: float | None) -> str:
     if v is None:
         return "n/d"
     return f"{round(v):,}".replace(",", " ") + " hab."
+
+
+def _fmt_short_date(iso: str | None) -> str | None:
+    if not iso:
+        return None
+    try:
+        return datetime.fromisoformat(iso).strftime("%d/%m/%Y")
+    except ValueError:
+        return iso
+
+
+def _format_freshness_line(freshness: dict | None) -> str | None:
+    """Ligne de fraîcheur des données (mêmes libellés que static/app.js::buildFreshnessLine)."""
+    if not freshness:
+        return None
+    parts = []
+    if freshness.get("ofgl"):
+        parts.append(f"comptes OFGL récupérés le {_fmt_short_date(freshness['ofgl'])}")
+    if freshness.get("decp_marches"):
+        parts.append(f"marchés DECP récupérés le {_fmt_short_date(freshness['decp_marches'])}")
+    if freshness.get("decp_entretien"):
+        parts.append(f'poste "Entretien" récupéré le {_fmt_short_date(freshness["decp_entretien"])}')
+    if not parts:
+        return None
+    return "Fraîcheur des données - " + " . ".join(parts) + "."
 
 
 class _ReportPDF(FPDF):
@@ -240,6 +265,21 @@ def _cover_page(pdf: _ReportPDF, audit: dict, generated_on: date) -> None:
     pdf.cell(0, 6, "En résumé", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_x(MARGIN)
     pdf.body_text(_build_synthese(audit), size=11, leading=6.2)
+
+    if audit.get("peer_group_note"):
+        note_y = pdf.get_y() + 2
+        qs = QUALIF_STYLE["a_surveiller"]
+        pdf.set_font("Helvetica", "", 8.5)
+        text_h = pdf.multi_cell(
+            CONTENT_W - 8, 4, audit["peer_group_note"], dry_run=True, output=MethodReturnValue.HEIGHT
+        )
+        note_h = text_h + 4
+        pdf.set_fill_color(*qs["bg"])
+        pdf.rect(MARGIN, note_y, CONTENT_W, note_h, style="F")
+        pdf.set_xy(MARGIN + 4, note_y + 2)
+        pdf.set_text_color(*qs["color"])
+        pdf.multi_cell(CONTENT_W - 8, 4, audit["peer_group_note"])
+        pdf.set_y(note_y + note_h + 4)
 
     vigilance = [c for c in audit["categories"] if c["qualification"] in ("alerte", "a_surveiller")]
     efficient = [c for c in audit["categories"] if c["qualification"] == "efficient"]
@@ -575,12 +615,15 @@ def _markets_page(pdf: _ReportPDF, marches: list[dict]) -> None:
         "Marchés les plus importants notifiés par la commune (source : DECP, data.economie.gouv.fr).",
     )
     for m in marches[:10]:
-        if pdf.get_y() + 22 > 268:
+        outlier = bool(m.get("montant_exceptionnel"))
+        card_h = 27 if outlier else 20
+        if pdf.get_y() + card_h + 2 > 268:
             pdf.add_page()
         y = pdf.get_y()
-        pdf.set_draw_color(*BORDER)
-        pdf.set_line_width(0.2)
-        pdf.rect(MARGIN, y, CONTENT_W, 20, style="D")
+        border_color = QUALIF_STYLE["alerte"]["bar"] if outlier else BORDER
+        pdf.set_draw_color(*border_color)
+        pdf.set_line_width(0.4 if outlier else 0.2)
+        pdf.rect(MARGIN, y, CONTENT_W, card_h, style="D")
 
         pdf.set_font("Helvetica", "B", 9.5)
         pdf.set_text_color(*INK)
@@ -590,6 +633,8 @@ def _markets_page(pdf: _ReportPDF, marches: list[dict]) -> None:
         pdf.cell(CONTENT_W - 6, 4.5, objet)
 
         montant_w = 37
+        pdf.set_font("Helvetica", "B", 9.5)
+        pdf.set_text_color(*(QUALIF_STYLE["alerte"]["color"] if outlier else INK))
         pdf.set_xy(MARGIN + CONTENT_W - montant_w - 2, y + 8)
         pdf.cell(montant_w, 4.5, _fmt_eur(m.get("montant")), align="R")
 
@@ -610,7 +655,24 @@ def _markets_page(pdf: _ReportPDF, marches: list[dict]) -> None:
         pdf.set_xy(MARGIN + 3, y + 13.5)
         pdf.cell(CONTENT_W - 6, 4, _truncate_to_width(pdf, ref_line, CONTENT_W - 6))
 
-        pdf.set_y(y + 22)
+        if outlier:
+            qs = QUALIF_STYLE["alerte"]
+            pdf.set_fill_color(*qs["bg"])
+            pdf.rect(MARGIN + 2, y + 18.5, CONTENT_W - 4, 6.5, style="F")
+            pdf.set_font("Helvetica", "", 7.5)
+            pdf.set_text_color(*qs["color"])
+            pdf.set_xy(MARGIN + 4, y + 19.7)
+            pdf.cell(
+                CONTENT_W - 8, 4,
+                _truncate_to_width(
+                    pdf,
+                    "Montant exceptionnel - supérieur au budget de fonctionnement annuel de la commune, "
+                    "probablement une anomalie de saisie de la source, à vérifier.",
+                    CONTENT_W - 8,
+                ),
+            )
+
+        pdf.set_y(y + card_h + 2)
 
 
 def _demographie_page(pdf: _ReportPDF, demographie: dict) -> None:
@@ -677,6 +739,8 @@ def _sources_page(pdf: _ReportPDF, audit: dict) -> None:
         "Les comptes OFGL démarrent en général en 2014-2017 et s'arrêtent 1 à 2 ans avant l'année en cours "
         "(délai de publication des comptes administratifs).",
     ]
+    if audit.get("decp_coverage_note"):
+        limites.append(audit["decp_coverage_note"])
     for l in limites:
         pdf.set_font("Helvetica", "", 9.5)
         pdf.set_text_color(*BODY)
@@ -694,6 +758,13 @@ def _sources_page(pdf: _ReportPDF, audit: dict) -> None:
         "Référentiel administratif et démographie - geo.api.gouv.fr, api.insee.fr (INSEE)",
         size=9.5,
     )
+
+    freshness_line = _format_freshness_line(audit.get("data_freshness"))
+    if freshness_line:
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "", 8.5)
+        pdf.set_text_color(*MUTED_DARK)
+        pdf.multi_cell(CONTENT_W, 4.4, freshness_line, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     pdf.ln(6)
     pdf.set_draw_color(*BORDER)

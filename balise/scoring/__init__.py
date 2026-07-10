@@ -79,6 +79,8 @@ class CommuneScoreCard:
     verdict: str  # "Efficace" | "Vigilance" | "Alerte"
     items: tuple[SpendingItemScore, ...]
     peers: tuple[PeerCommune, ...]
+    peer_group_refined: bool = False  # groupe resserré par population (voir _narrow_peer_group_by_population)
+    peer_group_heterogeneous: bool = False  # resserrement souhaitable mais impossible (pas assez de pairs)
 
 
 def _qualify(z_score: float, thresholds=SETTINGS.scoring) -> str:
@@ -198,6 +200,49 @@ def build_peer_group(
     )
 
 
+def _narrow_peer_group_by_population(
+    commune_population: float | None,
+    peers: list[dict],
+    settings: Settings,
+) -> tuple[list[dict], bool, bool]:
+    """Affine le groupe de pairs (même strate OFGL) par proximité de population.
+
+    La strate OFGL la plus haute ("100 000 habitants et plus") est ouverte :
+    elle mélange sans distinction une ville de 100 000 habitants et Paris
+    (2,1M), deux réalités budgétaires sans rapport. Quand la commune auditée
+    s'écarte de plus de `peer_population_ratio_window` de la population
+    médiane de son propre groupe de pairs, on resserre la comparaison aux
+    communes d'ordre de grandeur comparable, à condition qu'il en reste
+    assez pour rester statistiquement valable (`min_peer_group_size`). Si ce
+    n'est pas possible (ex. Paris : aucune autre ville française n'est dans
+    son ordre de grandeur), le groupe complet est conservé mais signalé
+    comme hétérogène plutôt que de silencieusement produire une comparaison
+    bancale.
+
+    Retourne (groupe_retenu, a_ete_affine, est_heterogene_non_affinable).
+    """
+    peers_with_population = [p for p in peers if p.get("population")]
+    if commune_population is None or len(peers_with_population) < settings.scoring.min_peer_group_size:
+        return peers, False, False
+
+    peer_median_population = median(p["population"] for p in peers_with_population)
+    ratio = max(commune_population, peer_median_population) / max(
+        1.0, min(commune_population, peer_median_population)
+    )
+    window = settings.scoring.peer_population_ratio_window
+    if ratio <= window:
+        return peers, False, False
+
+    lo, hi = commune_population / window, commune_population * window
+    narrowed = [p for p in peers if p.get("population") and lo <= p["population"] <= hi]
+    if len(narrowed) >= settings.scoring.min_peer_group_size:
+        return narrowed, True, False
+
+    # Pas assez de communes d'ordre de grandeur comparable pour resserrer :
+    # on garde le groupe complet, mais on le signale comme hétérogène.
+    return peers, False, True
+
+
 def score_commune(
     code_insee: str,
     exercice: int | None = None,
@@ -219,6 +264,9 @@ def score_commune(
         raise ScoringError(f"Strate démographique OFGL introuvable pour la commune {code_insee}.")
 
     peers = build_peer_group(code_insee, strate_value, exercice, settings=settings)
+    peers, peer_group_refined, peer_group_heterogeneous = _narrow_peer_group_by_population(
+        commune_data.get("population"), peers, settings
+    )
     commune_norm = normalize_financial_data(commune_data, settings=settings)
     peers_norm = [normalize_financial_data(p, settings=settings) for p in peers]
 
@@ -253,4 +301,6 @@ def score_commune(
         verdict=_verdict(global_score),
         items=tuple(items),
         peers=peer_communes,
+        peer_group_refined=peer_group_refined,
+        peer_group_heterogeneous=peer_group_heterogeneous,
     )

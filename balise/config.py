@@ -61,6 +61,13 @@ class ScoringThresholds:
     alert_abs_zscore: float = 2.0
     min_peer_group_size: int = 15
     target_peer_group_size: int = 20
+    # La strate OFGL la plus haute ("100 000 habitants et plus") est ouverte :
+    # elle mélange une ville de 100 000 habitants et Paris (2,1M). Si la
+    # commune auditée s'écarte de plus de ce facteur de la population
+    # médiane de son groupe de pairs, on resserre la comparaison aux
+    # communes d'ordre de grandeur comparable (voir
+    # balise.scoring._narrow_peer_group_by_population).
+    peer_population_ratio_window: float = 3.0
 
 
 @dataclass(frozen=True)

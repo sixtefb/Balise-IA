@@ -192,6 +192,60 @@ Contenu du rapport :
   n'a pas de données pour l'année demandée (couverture réelle : environ
   2014/2017 à aujourd'hui -1/-2 ans, délai de publication).
 
+### Qualité et fiabilité des données
+
+Cinq améliorations portant spécifiquement sur la fiabilité du score et la
+transparence sur les données, sans jamais modifier/filtrer une valeur
+source (uniquement des choix de méthodologie de comparaison, ou de
+l'affichage d'avertissements) :
+
+- **Groupe de comparaison affiné par population** (`balise.scoring._narrow_peer_group_by_population`).
+  La strate OFGL la plus haute ("100 000 habitants et plus") est ouverte :
+  elle mélangeait sans distinction une ville de 100 000 habitants et Paris
+  (2,1M). Quand la commune s'écarte de plus d'un facteur 3
+  (`ScoringThresholds.peer_population_ratio_window`) de la population
+  médiane de son groupe de pairs, la comparaison est resserrée aux communes
+  d'ordre de grandeur comparable — à condition qu'il en reste au moins
+  `min_peer_group_size` (15), sinon le groupe complet est conservé mais
+  signalé comme hétérogène (`peer_group_note` dans `GET /api/audit`,
+  affiché sur le rapport web, l'export XLSX et le PDF). Constaté en direct :
+  aucune ville française n'est dans l'ordre de grandeur de Paris (la
+  suivante, Marseille, fait 2,5x moins) — le resserrement échoue donc pour
+  Paris et se contente de prévenir l'utilisateur, plutôt que de produire une
+  fausse précision.
+- **Correction d'un bug de troncature OFGL sur les grandes villes**
+  (`balise.ingestion.ofgl._agregats_and_budget_where_clause`). Avant
+  correction, la requête `where=insee="..."` seule (tous exercices x tous
+  agrégats x tous budgets, y compris les budgets annexes) dépassait le
+  plafond de pagination OpenDataSoft pour les communes institutionnellement
+  complexes (Paris : exactement 6000 enregistrements renvoyés, soit le
+  plafond), tronquant la réponse et faisant afficher à tort "donnée
+  indisponible" sur 4 des 6 postes OFGL de Paris. Corrigé en restreignant la
+  requête aux seuls agrégats utilisés par le scoring (comme le fait déjà le
+  groupe de pairs), ramenant le volume à quelques dizaines de lignes par
+  commune.
+- **Indicateur de complétude déclarative DECP** (`balise.pipeline.decp_coverage_note`).
+  DECP est un système déclaratif : rien n'oblige une commune à publier tous
+  ses marchés. Sous 3 marchés distincts trouvés (tous exercices confondus),
+  un avertissement s'affiche pour signaler qu'une valeur basse au poste
+  "Entretien" (ou peu de marchés notables) peut refléter une faible
+  publication plutôt qu'une réelle sobriété — sans filtrer ni modifier les
+  données.
+- **Signalement des montants exceptionnels** (`balise.pipeline._flag_outlier_markets`).
+  Un marché dont le montant dépasse le budget de fonctionnement annuel
+  entier de la commune (`MARKET_OUTLIER_BUDGET_RATIO = 1.0`) est signalé
+  (badge rouge, web comme PDF) comme probable anomalie de saisie de la
+  source — **sans jamais plafonner ni modifier le montant affiché**, à la
+  différence d'une tentative précédente (revenue en arrière sur demande
+  explicite : la donnée reste toujours celle de la source, seulement
+  annotée).
+- **Fraîcheur des données affichée sur le rapport**
+  (`ofgl.get_data_freshness`, `decp.get_markets_freshness`,
+  `decp.get_maintenance_freshness`) : date de dernière récupération en
+  cache de chaque source (OFGL, marchés DECP, poste "Entretien"), lue sans
+  requête réseau supplémentaire, affichée en pied de rapport web, dans
+  l'export XLSX et sur la page "Sources" du PDF.
+
 ## Déploiement (Render)
 
 **Vercel n'est pas adapté à cette appli** : ses fonctions serverless ont un

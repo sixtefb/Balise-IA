@@ -59,6 +59,16 @@ function fmtDate(iso) {
   }
 }
 
+function buildFreshnessLine(freshness) {
+  if (!freshness) return '';
+  const parts = [
+    freshness.ofgl && `comptes OFGL récupérés le ${fmtDate(freshness.ofgl)}`,
+    freshness.decp_marches && `marchés DECP récupérés le ${fmtDate(freshness.decp_marches)}`,
+    freshness.decp_entretien && `poste "Entretien" récupéré le ${fmtDate(freshness.decp_entretien)}`,
+  ].filter(Boolean);
+  return parts.length ? `Fraîcheur des données — ${parts.join(' · ')}.` : '';
+}
+
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str == null ? '' : String(str);
@@ -234,6 +244,13 @@ function renderReport(data) {
   const peerBtn = document.getElementById('btn-peer-list');
   peerBtn.textContent =
     `${data.peer_group_size} communes de la même strate — ${data.strate_label}${commune.region ? ', ' + commune.region : ''}${data.exercice ? ' (exercice ' + data.exercice + ')' : ''}`;
+  const peerNoteEl = document.getElementById('peer-group-note');
+  if (data.peer_group_note) {
+    peerNoteEl.textContent = data.peer_group_note;
+    peerNoteEl.classList.remove('hidden');
+  } else {
+    peerNoteEl.classList.add('hidden');
+  }
   document.getElementById('report-date').innerHTML = `Analyse du<br>${fmtDate(data.generated_at)}`;
   document.getElementById('input-change-annee').value = data.exercice || '';
   document.getElementById('annee-error').classList.add('hidden');
@@ -269,6 +286,14 @@ function renderReport(data) {
   }).join('');
 
   renderMarkets(marches);
+  const coverageNoteEl = document.getElementById('decp-coverage-note');
+  if (data.decp_coverage_note) {
+    coverageNoteEl.textContent = data.decp_coverage_note;
+    coverageNoteEl.classList.remove('hidden');
+  } else {
+    coverageNoteEl.classList.add('hidden');
+  }
+  document.getElementById('data-freshness').textContent = buildFreshnessLine(data.data_freshness);
   renderDemographie(data.demographie);
 
   const forts = categories.filter((c) => c.qualification === 'efficient' || (c.qualification === 'conforme' && (c.delta_pct || 0) <= 0));
@@ -294,16 +319,18 @@ function renderMarkets(marches) {
     const lotsBadge = m.lot_count > 1
       ? `<span class="mono" style="font-size:10.5px; color:#565861; background:#eceae4; padding:2px 6px; margin-left:6px;">${m.lot_count} lots</span>`
       : '';
+    const outlier = !!m.montant_exceptionnel;
     return `
-    <div style="border:1px solid #e2e1db; background:#fff; padding:18px;">
+    <div style="border:1px solid ${outlier ? '#a5432f' : '#e2e1db'}; background:#fff; padding:18px;">
       <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin-bottom:8px;">
         <span style="font-size:14.5px; font-weight:600; line-height:1.35;">${escapeHtml(m.objet || 'Marché sans objet renseigné')}${lotsBadge}</span>
       </div>
       <div class="mono" style="font-size:12px; color:#33353c; display:flex; justify-content:space-between; gap:10px;">
         <span>${escapeHtml(titulaires)}</span>
-        <span style="font-weight:600; white-space:nowrap;">${fmtEur(m.montant)}</span>
+        <span style="font-weight:600; white-space:nowrap; color:${outlier ? '#8f3826' : 'inherit'};">${fmtEur(m.montant)}</span>
       </div>
       <div class="mono" style="font-size:11px; color:#9a9b9f; margin-top:4px;">${m.reference ? 'Réf. ' + escapeHtml(m.reference) + ' · ' : ''}${m.date_notification || ''}</div>
+      ${outlier ? `<div class="mono" style="font-size:10.5px; color:#8f3826; background:#f3e2dc; padding:5px 8px; margin-top:8px;">⚠ Montant exceptionnel — supérieur au budget de fonctionnement annuel de la commune. Probablement une anomalie de saisie de la source ; à vérifier avant d'être pris au pied de la lettre.</div>` : ''}
     </div>
   `;
   }).join('');
@@ -508,6 +535,25 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     row.getCell(1).font = { bold: true, color: { argb: 'FF565861' } };
   });
   s1.getCell('B9').font = { bold: true, size: 13, color: { argb: INK } };
+  if (data.peer_group_note) {
+    s1.addRow([]);
+    const noteRow = s1.addRow(['Remarque', data.peer_group_note]);
+    noteRow.getCell(1).font = { bold: true, color: { argb: 'FF565861' } };
+    noteRow.getCell(2).alignment = { wrapText: true };
+  }
+  if (data.decp_coverage_note) {
+    s1.addRow([]);
+    const covRow = s1.addRow(['Couverture DECP', data.decp_coverage_note]);
+    covRow.getCell(1).font = { bold: true, color: { argb: 'FF565861' } };
+    covRow.getCell(2).alignment = { wrapText: true };
+  }
+  const freshnessLine = buildFreshnessLine(data.data_freshness);
+  if (freshnessLine) {
+    s1.addRow([]);
+    const freshRow = s1.addRow(['Fraîcheur des données', freshnessLine.replace('Fraîcheur des données — ', '')]);
+    freshRow.getCell(1).font = { bold: true, color: { argb: 'FF565861' } };
+    freshRow.getCell(2).alignment = { wrapText: true };
+  }
 
   const s2 = wb.addWorksheet('Catégories');
   s2.columns = [{ width: 34 }, { width: 18 }, { width: 18 }, { width: 16 }, { width: 16 }, { width: 14 }];

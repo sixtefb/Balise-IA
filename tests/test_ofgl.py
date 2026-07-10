@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from balise.ingestion import ofgl
@@ -67,12 +69,12 @@ def fake_fetch(monkeypatch):
 
     def fake_fetch_records(base_url, dataset_id, where=None, **kwargs):
         calls.append(where)
-        if where == 'insee="27681"':
+        # Le where= réel est composite (budget principal + agrégats connus,
+        # voir ofgl._agregats_and_budget_where_clause) : on ne vérifie que le
+        # préfixe (insee=... ou tranche_population=...), pour ne pas
+        # dupliquer ici le détail de sa construction (balise.ingestion.ofgl).
+        if where and where.startswith('insee="27681"'):
             return VERNON_RECORDS
-        # Le where= du groupe de pairs est composite (budget principal +
-        # agrégats connus + exercice) : on ne vérifie que le préfixe
-        # correspondant à la strate demandée, pour ne pas dupliquer ici le
-        # détail de sa construction (balise.ingestion.ofgl).
         if where and where.startswith('tranche_population="20000-49999"'):
             return STRATE_RECORDS
         return []
@@ -134,3 +136,17 @@ def test_resolve_field_raises_with_available_fields():
         ofgl._resolve_field(["champ_inconnu_1", "champ_inconnu_2"], "code_insee")
 
     assert "champ_inconnu_1" in str(excinfo.value)
+
+
+def test_get_data_freshness_none_before_any_fetch(settings_with_tmp_cache):
+    assert ofgl.get_data_freshness("27681", settings=settings_with_tmp_cache) is None
+
+
+def test_get_data_freshness_after_fetch(fake_fetch, settings_with_tmp_cache):
+    before = datetime.now(timezone.utc)
+    ofgl.get_financial_data("27681", exercice=2023, settings=settings_with_tmp_cache)
+    after = datetime.now(timezone.utc)
+
+    freshness = ofgl.get_data_freshness("27681", settings=settings_with_tmp_cache)
+    assert freshness is not None
+    assert before <= freshness <= after

@@ -73,6 +73,26 @@ def read_query_cache(
     return json.loads(payload_json)
 
 
+def read_query_cache_timestamp(con: duckdb.DuckDBPyConnection, cache_key: str) -> datetime | None:
+    """Date de dernière écriture en cache pour `cache_key`, sans vérifier le TTL.
+
+    Sert à afficher la fraîcheur des données à l'utilisateur (ex. "comptes
+    OFGL récupérés le ..."), y compris quand l'entrée est encore dans le
+    cache mais ancienne — contrairement à `read_query_cache`, qui renvoie
+    None dès que le TTL est dépassé.
+    """
+    row = con.execute(
+        "SELECT fetched_at FROM api_query_cache WHERE cache_key = ?",
+        [cache_key],
+    ).fetchone()
+    if row is None:
+        return None
+    fetched_at = row[0]
+    if fetched_at.tzinfo is None:
+        fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+    return fetched_at
+
+
 def write_query_cache(con: duckdb.DuckDBPyConnection, cache_key: str, records: list[dict]) -> None:
     """Enregistre le résultat d'une requête (liste de dicts JSON-sérialisables) en cache."""
     con.execute(

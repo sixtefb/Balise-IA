@@ -28,10 +28,13 @@ __all__ = [
     "AuditResult",
     "CommuneAmbiguousError",
     "CommuneNotFoundError",
+    "DECP_LOW_COVERAGE_THRESHOLD",
     "InseeError",
     "MAX_HISTORY_YEARS",
     "ScoringError",
     "audit_to_dict",
+    "decp_coverage_note",
+    "peer_group_note",
     "run_audit",
     "run_history",
     "strate_label",
@@ -52,13 +55,92 @@ class AuditResult:
     commune: CommuneIdentity
     score_card: CommuneScoreCard
     marches_notables: tuple[dict, ...]
+    marches_total_count: int
     demographie: dict | None
     generated_at: str
+    data_freshness: dict[str, str | None]
 
 
 def strate_label(score_card: CommuneScoreCard) -> str:
     """Libellé humain de la strate démographique OFGL utilisée pour le groupe de pairs."""
     return OFGL_STRATE_LABELS.get(score_card.strate_value, f"strate {score_card.strate_value}")
+
+
+def peer_group_note(score_card: CommuneScoreCard) -> str | None:
+    """Explication à afficher quand le groupe de comparaison a été affiné ou reste hétérogène.
+
+    Voir balise.scoring._narrow_peer_group_by_population : la strate OFGL la
+    plus haute ("100 000 habitants et plus") est ouverte et peut mélanger
+    des villes de tailles très différentes.
+    """
+    if score_card.peer_group_refined:
+        return (
+            "Comparaison resserrée aux communes de la strate dont la population est du même "
+            "ordre de grandeur (la strate complète est trop large pour rester pertinente pour "
+            "les grandes villes)."
+        )
+    if score_card.peer_group_heterogeneous:
+        return (
+            "Cette commune est nettement plus grande ou plus petite que la médiane de sa strate "
+            "démographique, et il n'y a pas assez d'autres communes d'ordre de grandeur comparable "
+            "pour resserrer la comparaison : les écarts mesurés sont à interpréter avec prudence."
+        )
+    return None
+
+
+# DECP est un système déclaratif : rien n'oblige une commune à publier tous
+# ses marchés, et la rigueur de publication varie énormément d'une commune à
+# l'autre. Sous ce seuil (nombre de marchés distincts retrouvés, tous
+# exercices confondus), une valeur basse au poste "Entretien" (ou peu de
+# marchés notables) est probablement le signe d'une faible couverture
+# déclarative plutôt que d'une réelle absence de dépense - seuil empirique,
+# pas une mesure statistique rigoureuse.
+DECP_LOW_COVERAGE_THRESHOLD = 3
+
+
+def decp_coverage_note(marches_total_count: int) -> str | None:
+    """Avertissement de complétude déclarative DECP, si peu de marchés ont été retrouvés.
+
+    Ne modifie ni ne filtre aucune donnée : signale seulement que l'absence
+    de marchés notables peut refléter une faible publication par la commune
+    plutôt qu'une absence réelle de dépense (DECP est déclaratif, pas
+    exhaustif par construction).
+    """
+    if marches_total_count >= DECP_LOW_COVERAGE_THRESHOLD:
+        return None
+    if marches_total_count == 0:
+        return (
+            "Aucun marché public trouvé dans les données DECP pour cette commune. DECP est "
+            "un système déclaratif : cette absence peut refléter une faible publication par la "
+            "commune plutôt qu'une absence réelle de marchés (notamment pour le poste "
+            "\"Entretien\", reconstruit à partir de ces mêmes données)."
+        )
+    return (
+        f"Seulement {marches_total_count} marché(s) public(s) trouvé(s) dans les données DECP pour "
+        "cette commune. DECP est un système déclaratif : ce nombre peut refléter une couverture "
+        "déclarative incomplète plutôt qu'une réelle sobriété (notamment pour le poste "
+        "\"Entretien\", reconstruit à partir de ces mêmes données)."
+    )
+
+
+# Un marché dont le montant dépasse le budget de fonctionnement annuel
+# entier de la commune (agrégat OFGL "charges_de_fonctionnement", en valeur
+# absolue, pas €/habitant) est presque certainement une anomalie de saisie
+# (unité, décimale...) plutôt qu'un marché réel - constaté en direct sur un
+# cas concret (~99,999 milliards d'euros pour de la maintenance
+# d'équipements hospitaliers). Ne PAS filtrer/plafonner cette valeur (le
+# montant affiché reste celui de la source) : seulement la signaler, pour
+# que l'utilisateur sache qu'elle mérite une vérification avant d'être prise
+# au pied de la lettre.
+MARKET_OUTLIER_BUDGET_RATIO = 1.0
+
+
+def _flag_outlier_markets(grouped_markets: list[dict], budget_reference: float | None) -> list[dict]:
+    """Ajoute `montant_exceptionnel: bool` à chaque marché groupé, sans modifier `montant`."""
+    if not budget_reference or budget_reference <= 0:
+        return [{**m, "montant_exceptionnel": False} for m in grouped_markets]
+    threshold = budget_reference * MARKET_OUTLIER_BUDGET_RATIO
+    return [{**m, "montant_exceptionnel": (m.get("montant") or 0) > threshold} for m in grouped_markets]
 
 
 # Beaucoup de marchés DECP sont allotis : un même marché à bons de commande
@@ -139,15 +221,29 @@ def run_audit(
             marches = decp.get_markets_for_commune(commune.siren, settings=settings)
         except DecpError:
             marches = []
-    marches_notables = tuple(_group_markets(marches)[:markets_limit])
+    commune_financials = ofgl.get_financial_data(commune.code_insee, exercice=resolved_exercice, settings=settings)
+    budget_reference = (commune_financials or {}).get("charges_de_fonctionnement")
+    marches_grouped = _flag_outlier_markets(_group_markets(marches), budget_reference)
+    marches_notables = tuple(marches_grouped[:markets_limit])
     demographie = insee_demographie.get_age_breakdown(commune.code_insee, settings=settings)
+
+    ofgl_freshness = ofgl.get_data_freshness(commune.code_insee, settings=settings)
+    decp_freshness = decp.get_markets_freshness(commune.siren, settings=settings) if commune.siren else None
+    entretien_freshness = decp.get_maintenance_freshness(settings=settings)
+    data_freshness = {
+        "ofgl": ofgl_freshness.isoformat() if ofgl_freshness else None,
+        "decp_marches": decp_freshness.isoformat() if decp_freshness else None,
+        "decp_entretien": entretien_freshness.isoformat() if entretien_freshness else None,
+    }
 
     return AuditResult(
         commune=commune,
         score_card=score_card,
         marches_notables=marches_notables,
+        marches_total_count=len(marches_grouped),
         demographie=demographie,
         generated_at=datetime.now(timezone.utc).isoformat(),
+        data_freshness=data_freshness,
     )
 
 
@@ -225,6 +321,7 @@ def audit_to_dict(result: AuditResult) -> dict:
         "exercice": card.exercice,
         "strate_label": strate_label(card),
         "peer_group_size": card.peer_group_size,
+        "peer_group_note": peer_group_note(card),
         "score": {"global": card.global_score, "verdict": card.verdict},
         "categories": [
             {
@@ -250,9 +347,13 @@ def audit_to_dict(result: AuditResult) -> dict:
                 "lot_count": m.get("lot_count"),
                 "date_notification": m.get("date_notification"),
                 "titulaires": m.get("titulaires") or [],
+                "montant_exceptionnel": m.get("montant_exceptionnel", False),
             }
             for m in result.marches_notables
         ],
+        "marches_total_count": result.marches_total_count,
+        "decp_coverage_note": decp_coverage_note(result.marches_total_count),
         "demographie": result.demographie,
         "generated_at": result.generated_at,
+        "data_freshness": result.data_freshness,
     }

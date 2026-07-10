@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from balise.ingestion import decp
@@ -95,3 +97,31 @@ def test_resolve_field_raises_with_available_fields():
         decp._resolve_field(["champ_inconnu_1", "champ_inconnu_2"], "montant")
 
     assert "champ_inconnu_1" in str(excinfo.value)
+
+
+def test_get_markets_freshness_none_before_fetch(settings_with_tmp_cache):
+    assert decp.get_markets_freshness("21270681000019", settings=settings_with_tmp_cache) is None
+
+
+def test_get_markets_freshness_after_fetch(fake_fetch, settings_with_tmp_cache):
+    before = datetime.now(timezone.utc)
+    decp.get_markets_for_commune("21270681000019", settings=settings_with_tmp_cache)
+    after = datetime.now(timezone.utc)
+
+    freshness = decp.get_markets_freshness("21270681000019", settings=settings_with_tmp_cache)
+    assert freshness is not None
+    assert before <= freshness <= after
+
+
+def test_get_maintenance_freshness_none_before_fetch(settings_with_tmp_cache):
+    assert decp.get_maintenance_freshness(settings=settings_with_tmp_cache) is None
+
+
+def test_get_maintenance_freshness_after_fetch(fake_fetch, settings_with_tmp_cache):
+    before = datetime.now(timezone.utc)
+    decp.get_maintenance_spending_by_commune(settings=settings_with_tmp_cache)
+    after = datetime.now(timezone.utc)
+
+    freshness = decp.get_maintenance_freshness(settings=settings_with_tmp_cache)
+    assert freshness is not None
+    assert before <= freshness <= after

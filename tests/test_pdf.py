@@ -26,7 +26,14 @@ def _category(key, label, qualification, delta_pct, commune_value=150.0, peer_me
     }
 
 
-def _audit(categories=None, marches_notables=None, demographie=None):
+def _audit(
+    categories=None,
+    marches_notables=None,
+    demographie=None,
+    peer_group_note=None,
+    decp_coverage_note=None,
+    data_freshness=None,
+):
     return {
         "commune": {
             "nom": "Testville",
@@ -43,6 +50,7 @@ def _audit(categories=None, marches_notables=None, demographie=None):
         "exercice": 2023,
         "strate_label": "10 000 à 19 999 habitants",
         "peer_group_size": 20,
+        "peer_group_note": peer_group_note,
         "score": {"global": 62, "verdict": "Vigilance"},
         "categories": categories if categories is not None else [
             _category("charges_de_fonctionnement", "Charges de fonctionnement", "conforme", 0.02),
@@ -64,6 +72,7 @@ def _audit(categories=None, marches_notables=None, demographie=None):
                 "titulaires": ["Entreprise Dupont", "Entreprise Martin"],
             },
         ],
+        "decp_coverage_note": decp_coverage_note,
         "demographie": demographie if demographie is not None else {
             "millesime": 2021,
             "population_totale": 12345,
@@ -74,6 +83,11 @@ def _audit(categories=None, marches_notables=None, demographie=None):
             ],
         },
         "generated_at": "2024-01-01T00:00:00+00:00",
+        "data_freshness": data_freshness if data_freshness is not None else {
+            "ofgl": "2024-01-01T10:00:00+00:00",
+            "decp_marches": "2023-12-15T08:30:00+00:00",
+            "decp_entretien": "2023-11-01T00:00:00+00:00",
+        },
     }
 
 
@@ -152,3 +166,77 @@ def test_generate_pdf_truncates_long_market_object_without_overlap():
     ]
     pdf_bytes = generate_pdf(_audit(marches_notables=marches), generated_on=date(2024, 1, 1))
     assert pdf_bytes.startswith(b"%PDF")
+
+
+def test_generate_pdf_shows_peer_group_note_on_cover():
+    note = "Cette commune est nettement plus grande... interpréter avec prudence."
+    pdf_bytes = generate_pdf(_audit(peer_group_note=note), generated_on=date(2024, 1, 1))
+    text = PdfReader(BytesIO(pdf_bytes)).pages[0].extract_text() or ""
+    assert "interpréter avec prudence" in text
+
+
+def test_generate_pdf_without_peer_group_note_stays_valid():
+    pdf_bytes = generate_pdf(_audit(peer_group_note=None), generated_on=date(2024, 1, 1))
+    assert pdf_bytes.startswith(b"%PDF")
+
+
+def test_generate_pdf_shows_decp_coverage_note_on_sources_page():
+    note = "Seulement 1 marché(s) public(s) trouvé(s) dans les données DECP pour cette commune."
+    pdf_bytes = generate_pdf(_audit(decp_coverage_note=note), generated_on=date(2024, 1, 1))
+    pages = PdfReader(BytesIO(pdf_bytes)).pages
+    full_text = "".join(p.extract_text() or "" for p in pages)
+    assert "marché(s) public(s) trouvé" in full_text
+
+
+def test_generate_pdf_shows_data_freshness_on_sources_page():
+    pdf_bytes = generate_pdf(_audit(), generated_on=date(2024, 1, 1))
+    pages = PdfReader(BytesIO(pdf_bytes)).pages
+    full_text = "".join(p.extract_text() or "" for p in pages)
+    assert "Fraîcheur des données" in full_text
+    assert "01/01/2024" in full_text
+
+
+def test_generate_pdf_without_data_freshness_stays_valid():
+    pdf_bytes = generate_pdf(_audit(data_freshness={}), generated_on=date(2024, 1, 1))
+    assert pdf_bytes.startswith(b"%PDF")
+    pages = PdfReader(BytesIO(pdf_bytes)).pages
+    full_text = "".join(p.extract_text() or "" for p in pages)
+    assert "Fraîcheur des données" not in full_text
+
+
+def test_generate_pdf_flags_outlier_market():
+    marches = [
+        {
+            "reference": "2023/003",
+            "objet": "Maintenance équipements hospitaliers",
+            "montant": 99_999_997_952.0,
+            "lot_count": 1,
+            "date_notification": "2023-06-01",
+            "titulaires": ["Fournisseur X"],
+            "montant_exceptionnel": True,
+        },
+    ]
+    pdf_bytes = generate_pdf(_audit(marches_notables=marches), generated_on=date(2024, 1, 1))
+    pages = PdfReader(BytesIO(pdf_bytes)).pages
+    full_text = "".join(p.extract_text() or "" for p in pages)
+    assert "Montant exceptionnel" in full_text
+    # Le montant affiché reste celui de la source, jamais plafonné/modifié.
+    assert "99" in full_text and "997" in full_text and "952" in full_text
+
+
+def test_generate_pdf_no_flag_for_normal_market():
+    marches = [
+        {
+            "reference": "2023/004",
+            "objet": "Marché normal",
+            "montant": 50_000.0,
+            "lot_count": 1,
+            "date_notification": "2023-06-01",
+            "titulaires": ["Fournisseur Y"],
+            "montant_exceptionnel": False,
+        },
+    ]
+    pdf_bytes = generate_pdf(_audit(marches_notables=marches), generated_on=date(2024, 1, 1))
+    pages = PdfReader(BytesIO(pdf_bytes)).pages
+    full_text = "".join(p.extract_text() or "" for p in pages)
+    assert "Montant exceptionnel" not in full_text

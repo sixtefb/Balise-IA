@@ -26,10 +26,11 @@ au fil de l'eau.
 from __future__ import annotations
 
 import unicodedata
+from datetime import datetime
 
 from balise.config import DECP_COLUMN_ALIASES, SETTINGS, Settings
 from balise.ingestion._opendatasoft import OpenDataSoftError, fetch_records
-from balise.storage.db import get_connection, read_query_cache, write_query_cache
+from balise.storage.db import get_connection, read_query_cache, read_query_cache_timestamp, write_query_cache
 
 
 class DecpError(Exception):
@@ -115,6 +116,10 @@ def _fetch_cached(where: str, settings: Settings, max_records: int | None = None
     return records
 
 
+def _cache_key(where: str, settings: Settings) -> str:
+    return f"decp:{settings.decp.dataset_marches}:{where}"
+
+
 def _normalize_records(records: list[dict], montant_minimum: float) -> list[dict]:
     if not records:
         return []
@@ -152,6 +157,17 @@ def get_markets_for_commune(siret_acheteur: str, settings: Settings = SETTINGS) 
     where = f'startswith(idacheteur, "{siret_acheteur}")'
     records = _fetch_cached(where, settings)
     return _normalize_records(records, settings.decp.montant_minimum_pertinent)
+
+
+def get_markets_freshness(siret_acheteur: str, settings: Settings = SETTINGS) -> datetime | None:
+    """Date de dernière récupération (cache) des marchés DECP de cette commune.
+
+    Purement informatif, ne déclenche aucune requête réseau (voir
+    ofgl.get_data_freshness pour le même principe côté OFGL).
+    """
+    where = f'startswith(idacheteur, "{siret_acheteur}")'
+    con = get_connection(settings)
+    return read_query_cache_timestamp(con, _cache_key(where, settings))
 
 
 def get_comparable_markets(code_cpv_prefix: str, settings: Settings = SETTINGS) -> list[dict]:
@@ -206,6 +222,24 @@ def get_maintenance_spending_by_commune(settings: Settings = SETTINGS) -> dict[s
             totals[code_insee] = totals.get(code_insee, 0.0) + montant
 
     return totals
+
+
+def get_maintenance_freshness(settings: Settings = SETTINGS) -> datetime | None:
+    """Date de la récupération la plus ancienne parmi les codes CPV du poste "Entretien".
+
+    La table nationale d'entretien est composée d'une requête par code CPV
+    configuré (voir get_maintenance_spending_by_commune, une entrée de cache
+    par code) : on retourne la plus ancienne des dates de récupération,
+    prudente/représentative de la fraîcheur réelle de l'ensemble.
+    """
+    con = get_connection(settings)
+    timestamps = [
+        ts
+        for cpv in settings.maintenance_cpv_codes
+        if (ts := read_query_cache_timestamp(con, _cache_key(f'startswith(codecpv, "{cpv.prefix}")', settings)))
+        is not None
+    ]
+    return min(timestamps) if timestamps else None
 
 
 def _parse_code_insee(raw_value) -> str | None:

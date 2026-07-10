@@ -24,6 +24,7 @@ pour valider/corriger ces alias au fil de l'eau.
 from __future__ import annotations
 
 import unicodedata
+from datetime import datetime
 
 from balise.config import (
     OFGL_AGGREGATE_ALIASES,
@@ -35,7 +36,7 @@ from balise.config import (
     Settings,
 )
 from balise.ingestion._opendatasoft import OpenDataSoftError, fetch_records
-from balise.storage.db import get_connection, read_query_cache, write_query_cache
+from balise.storage.db import get_connection, read_query_cache, read_query_cache_timestamp, write_query_cache
 
 
 class OfglError(Exception):
@@ -205,6 +206,28 @@ def _pivot_records(records: list[dict], exercice: int | None = None) -> dict[str
     return by_commune
 
 
+def _agregats_and_budget_where_clause() -> str:
+    """Clause commune 'même agrégats que le scoring + budget principal seulement'.
+
+    Sans cette restriction, `where=insee="..."` seul renvoie TOUTES les
+    lignes de la commune (tous exercices x tous agrégats OFGL x budget
+    principal ET tous les budgets annexes) : pour une commune institutionnellement
+    complexe (Paris, Lyon, Marseille - nombreux budgets annexes, nombreuses
+    années), ce volume peut dépasser `max_records_per_query` et tronquer la
+    réponse silencieusement côté client OpenDataSoft. Constaté en direct sur
+    Paris (75056) : `insee="75056"` seul renvoie exactement 6000
+    enregistrements (le plafond), et la troncature coupe avant certains
+    agrégats de l'exercice le plus récent (achats, équipement, dette,
+    subventions manquants alors que personnel/fonctionnement passent) - d'où
+    des postes affichés à tort comme "donnée indisponible". Restreindre la
+    requête aux seuls agrégats utilisés par le scoring (comme le fait déjà
+    `get_peer_group_financial_data`) ramène le volume par commune à quelques
+    dizaines de lignes, largement sous le plafond.
+    """
+    agregat_values = ", ".join(f'"{label}"' for label in OFGL_AGGREGATE_QUERY_LABELS.values())
+    return f'type_de_budget="{OFGL_BUDGET_PRINCIPAL_LABEL}" and agregat in ({agregat_values})'
+
+
 def get_financial_data(
     code_insee: str,
     exercice: int | None = None,
@@ -220,16 +243,31 @@ def get_financial_data(
     déterministe.
     """
     dataset_id = _dataset_id(dataset, settings)
-    where = f'insee="{code_insee}"'
+    where = f'insee="{code_insee}" and {_agregats_and_budget_where_clause()}'
     records = _fetch_cached(dataset_id, where, settings)
     by_commune = _pivot_records(records, exercice=exercice)
     return by_commune.get(str(code_insee))
 
 
+def get_data_freshness(code_insee: str, dataset: str = "communes", settings: Settings = SETTINGS) -> datetime | None:
+    """Date de dernière récupération (cache) des données OFGL de cette commune.
+
+    Purement informatif (affiché sur le rapport pour la transparence sur la
+    provenance des données) : ne déclenche aucune requête réseau, se
+    contente de lire le timestamp déjà associé à la même clé de cache que
+    `get_financial_data`.
+    """
+    dataset_id = _dataset_id(dataset, settings)
+    where = f'insee="{code_insee}" and {_agregats_and_budget_where_clause()}'
+    cache_key = f"ofgl:{dataset_id}:{where}"
+    con = get_connection(settings)
+    return read_query_cache_timestamp(con, cache_key)
+
+
 def latest_exercice(code_insee: str, dataset: str = "communes", settings: Settings = SETTINGS) -> int | None:
     """Exercice budgétaire le plus récent disponible (budget principal) pour cette commune."""
     dataset_id = _dataset_id(dataset, settings)
-    where = f'insee="{code_insee}"'
+    where = f'insee="{code_insee}" and {_agregats_and_budget_where_clause()}'
     records = _fetch_cached(dataset_id, where, settings)
     if not records:
         return None
