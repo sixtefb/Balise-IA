@@ -250,10 +250,13 @@ def _cover_page(pdf: _ReportPDF, audit: dict, generated_on: date) -> None:
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(*MUTED_DARK)
     pdf.set_xy(badge_x, gauge_cy + 5)
-    pdf.multi_cell(
-        70, 4.8,
-        f"vs {audit.get('peer_group_size', 0)} communes de la strate\n{audit.get('strate_label', '')}",
+    peer_group_size = audit.get("peer_group_size", 0)
+    subtitle = (
+        f"vs {peer_group_size} commune(s) choisie(s)"
+        if audit.get("custom_peer_group")
+        else f"vs {peer_group_size} communes de la strate\n{audit.get('strate_label', '')}"
     )
+    pdf.multi_cell(70, 4.8, subtitle)
 
     pdf.set_xy(MARGIN, 150)
     pdf.set_draw_color(*BORDER)
@@ -266,19 +269,18 @@ def _cover_page(pdf: _ReportPDF, audit: dict, generated_on: date) -> None:
     pdf.set_x(MARGIN)
     pdf.body_text(_build_synthese(audit), size=11, leading=6.2)
 
-    if audit.get("peer_group_note"):
+    active_note = audit.get("custom_compare_note") or audit.get("peer_group_note")
+    if active_note:
         note_y = pdf.get_y() + 2
         qs = QUALIF_STYLE["a_surveiller"]
         pdf.set_font("Helvetica", "", 8.5)
-        text_h = pdf.multi_cell(
-            CONTENT_W - 8, 4, audit["peer_group_note"], dry_run=True, output=MethodReturnValue.HEIGHT
-        )
+        text_h = pdf.multi_cell(CONTENT_W - 8, 4, active_note, dry_run=True, output=MethodReturnValue.HEIGHT)
         note_h = text_h + 4
         pdf.set_fill_color(*qs["bg"])
         pdf.rect(MARGIN, note_y, CONTENT_W, note_h, style="F")
         pdf.set_xy(MARGIN + 4, note_y + 2)
         pdf.set_text_color(*qs["color"])
-        pdf.multi_cell(CONTENT_W - 8, 4, audit["peer_group_note"])
+        pdf.multi_cell(CONTENT_W - 8, 4, active_note)
         pdf.set_y(note_y + note_h + 4)
 
     vigilance = [c for c in audit["categories"] if c["qualification"] in ("alerte", "a_surveiller")]
@@ -327,14 +329,19 @@ def _build_synthese(audit: dict) -> str:
     vigilance = [c for c in categories if c["qualification"] in ("alerte", "a_surveiller")]
     efficient = [c for c in categories if c["qualification"] == "efficient"]
 
+    peer_group_size = audit.get("peer_group_size", 0)
+    group_desc = (
+        f"des {peer_group_size} commune(s) choisie(s)"
+        if audit.get("custom_peer_group")
+        else f"des {peer_group_size} communes de sa strate démographique"
+    )
     text = (
         f"La commune présente un indice d'efficacité budgétaire de {score['global']}/100 "
-        f"({score['verdict'].lower()}) vis-à-vis des {audit.get('peer_group_size', 0)} communes de sa "
-        "strate démographique."
+        f"({score['verdict'].lower()}) vis-à-vis {group_desc}."
     )
     if vigilance:
         labels = ", ".join(c["label"].lower() for c in vigilance)
-        text += f" Les écarts se concentrent sur {labels}, au-dessus de la médiane de strate."
+        text += f" Les écarts se concentrent sur {labels}, au-dessus de la médiane du groupe."
     if efficient:
         labels = ", ".join(c["label"].lower() for c in efficient)
         text += f" À l'inverse, {labels} apparaissent maîtrisés."
@@ -344,12 +351,20 @@ def _build_synthese(audit: dict) -> str:
 def _methodology_page(pdf: _ReportPDF, audit: dict) -> None:
     pdf.add_page()
     pdf.section_title("Comment ce score est calculé")
-    pdf.body_text(
-        "Pour chaque poste de dépense, Balise IA compare la commune à un groupe de "
-        f"{audit.get('peer_group_size', 0)} communes de même strate démographique "
-        f"({audit.get('strate_label', 'n/d')}), à l'échelle nationale. La comparaison se fait en "
-        "euros par habitant, pour que la taille de la commune n'influence pas l'écart mesuré."
-    )
+    if audit.get("custom_peer_group"):
+        pdf.body_text(
+            "Pour chaque poste de dépense, Balise IA compare la commune au groupe de "
+            f"{audit.get('peer_group_size', 0)} commune(s) choisie(s) manuellement pour ce rapport, "
+            "à la place du groupe automatique par strate démographique. La comparaison se fait en "
+            "euros par habitant, pour que la taille de la commune n'influence pas l'écart mesuré."
+        )
+    else:
+        pdf.body_text(
+            "Pour chaque poste de dépense, Balise IA compare la commune à un groupe de "
+            f"{audit.get('peer_group_size', 0)} communes de même strate démographique "
+            f"({audit.get('strate_label', 'n/d')}), à l'échelle nationale. La comparaison se fait en "
+            "euros par habitant, pour que la taille de la commune n'influence pas l'écart mesuré."
+        )
     pdf.ln(2)
     pdf.body_text(
         "L'écart est résumé par un z-score : le nombre d'écarts-types séparant la commune de la "
@@ -477,7 +492,7 @@ def _draw_delta_row(pdf: _ReportPDF, x: float, y: float, w: float, cat: dict, ma
     pdf.set_xy(x, bar_y + 5.5)
     pdf.cell(w / 2, 4, f"commune : {_fmt_eur(cat['commune_par_habitant'])}/hab", align="L")
     pdf.set_xy(x + w / 2, bar_y + 5.5)
-    pdf.cell(w / 2, 4, f"médiane strate : {_fmt_eur(cat['peer_median_par_habitant'])}/hab", align="R")
+    pdf.cell(w / 2, 4, f"médiane groupe : {_fmt_eur(cat['peer_median_par_habitant'])}/hab", align="R")
 
 
 def _weakness_pages(pdf: _ReportPDF, categories: list[dict]) -> None:
@@ -532,7 +547,7 @@ def _draw_weakness_block(pdf: _ReportPDF, cat: dict) -> None:
 
     pdf.set_font("Courier", "", 8.5)
     pdf.set_text_color(*MUTED_DARK)
-    pdf.cell(CONTENT_W / 3, 4.5, f"médiane strate : {_fmt_eur(cat['peer_median_par_habitant'])}/hab")
+    pdf.cell(CONTENT_W / 3, 4.5, f"médiane groupe : {_fmt_eur(cat['peer_median_par_habitant'])}/hab")
     pdf.set_font("Courier", "B", 8.5)
     pdf.set_text_color(*qs["color"])
     pdf.cell(CONTENT_W / 3, 4.5, f"cette commune : {_fmt_eur(cat['commune_par_habitant'])}/hab")

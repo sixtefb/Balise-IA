@@ -33,6 +33,8 @@ def _audit(
     peer_group_note=None,
     decp_coverage_note=None,
     data_freshness=None,
+    custom_peer_group=False,
+    custom_compare_note=None,
 ):
     return {
         "commune": {
@@ -48,9 +50,11 @@ def _audit(
             "epci": None,
         },
         "exercice": 2023,
-        "strate_label": "10 000 à 19 999 habitants",
+        "strate_label": "groupe personnalisé" if custom_peer_group else "10 000 à 19 999 habitants",
         "peer_group_size": 20,
         "peer_group_note": peer_group_note,
+        "custom_peer_group": custom_peer_group,
+        "custom_compare_note": custom_compare_note,
         "score": {"global": 62, "verdict": "Vigilance"},
         "categories": categories if categories is not None else [
             _category("charges_de_fonctionnement", "Charges de fonctionnement", "conforme", 0.02),
@@ -240,3 +244,23 @@ def test_generate_pdf_no_flag_for_normal_market():
     pages = PdfReader(BytesIO(pdf_bytes)).pages
     full_text = "".join(p.extract_text() or "" for p in pages)
     assert "Montant exceptionnel" not in full_text
+
+
+def test_generate_pdf_shows_custom_compare_note_instead_of_peer_group_note():
+    note = "Comparaison à 2 commune(s) choisie(s) manuellement, au lieu du groupe automatique."
+    pdf_bytes = generate_pdf(
+        _audit(custom_peer_group=True, custom_compare_note=note, peer_group_note="devrait être ignoré"),
+        generated_on=date(2024, 1, 1),
+    )
+    pages = PdfReader(BytesIO(pdf_bytes)).pages
+    full_text = "".join(p.extract_text() or "" for p in pages)
+    assert "Comparaison à 2 commune(s) choisie(s) manuellement" in full_text
+    assert "devrait être ignoré" not in full_text
+
+
+def test_generate_pdf_custom_peer_group_methodology_text():
+    pdf_bytes = generate_pdf(_audit(custom_peer_group=True), generated_on=date(2024, 1, 1))
+    pages = PdfReader(BytesIO(pdf_bytes)).pages
+    full_text = "".join(p.extract_text() or "" for p in pages)
+    assert "choisie" in full_text and "manuellement" in full_text
+    assert "strate démographique (" not in full_text

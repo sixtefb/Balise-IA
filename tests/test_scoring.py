@@ -42,6 +42,25 @@ MAINTENANCE_TOTALS = {
 }
 
 
+ALL_COMMUNES_BY_CODE = {"99999": COMMUNE_DATA, **{p["code_insee"]: p for p in PEERS}}
+
+
+@pytest.fixture
+def mocked_sources_custom(monkeypatch):
+    """Comme mocked_sources, mais get_financial_data répond pour n'importe lequel des PEERS
+    (utilisé pour tester score_commune_custom, qui interroge chaque pair individuellement)."""
+    monkeypatch.setattr(
+        scoring.ofgl,
+        "get_financial_data",
+        lambda code_insee, exercice=None, settings=None: ALL_COMMUNES_BY_CODE.get(code_insee),
+    )
+    monkeypatch.setattr(
+        scoring.decp,
+        "get_maintenance_spending_by_commune",
+        lambda settings=None: dict(MAINTENANCE_TOTALS),
+    )
+
+
 @pytest.fixture
 def mocked_sources(monkeypatch):
     monkeypatch.setattr(scoring.ofgl, "get_financial_data", lambda code_insee, exercice=None, settings=None: (
@@ -220,3 +239,44 @@ def test_score_commune_flags_heterogeneous_peer_group(monkeypatch):
     assert card.peer_group_heterogeneous is True
     assert card.peer_group_refined is False
     assert card.peer_group_size == len(all_peers)
+
+
+# ---- Groupe de comparaison choisi manuellement (score_commune_custom) ----
+
+
+def test_score_commune_custom_uses_chosen_peers(mocked_sources_custom):
+    card = scoring.score_commune_custom("99999", ["00000", "00001", "00002"], exercice=2024)
+
+    assert card.custom_peer_group is True
+    assert card.peer_group_size == 3
+    assert card.custom_peer_unavailable == ()
+    assert {p.code_insee for p in card.peers} == {"00000", "00001", "00002"}
+
+
+def test_score_commune_custom_skips_unavailable_peers(mocked_sources_custom):
+    card = scoring.score_commune_custom("99999", ["00000", "99998"], exercice=2024)
+
+    assert card.peer_group_size == 1
+    assert card.custom_peer_unavailable == ("99998",)
+
+
+def test_score_commune_custom_ignores_self_and_duplicates(mocked_sources_custom):
+    card = scoring.score_commune_custom("99999", ["00000", "00000", "99999"], exercice=2024)
+
+    assert card.peer_group_size == 1
+
+
+def test_score_commune_custom_donnee_absente_with_single_peer(mocked_sources_custom):
+    # Avec un seul pair, pas de z-score fiable : _build_item_score retombe sur
+    # "donnee_absente" pour chaque poste (comportement voulu, pas un bug).
+    card = scoring.score_commune_custom("99999", ["00000"], exercice=2024)
+
+    assert card.peer_group_size == 1
+    assert all(it.qualification == "donnee_absente" for it in card.items)
+    assert card.global_score == 50
+
+
+def test_score_commune_custom_raises_when_commune_missing(monkeypatch):
+    monkeypatch.setattr(scoring.ofgl, "get_financial_data", lambda code_insee, exercice=None, settings=None: None)
+    with pytest.raises(scoring.ScoringError, match="Aucune donnée OFGL"):
+        scoring.score_commune_custom("00000", ["00001"], exercice=2024)

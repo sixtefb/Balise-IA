@@ -191,6 +191,21 @@ Contenu du rapport :
   d'année" directement sur le rapport. Message d'erreur explicite si OFGL
   n'a pas de données pour l'année demandée (couverture réelle : environ
   2014/2017 à aujourd'hui -1/-2 ans, délai de publication).
+- **Groupe de comparaison choisi manuellement** (`balise.scoring.score_commune_custom`,
+  paramètres répétés `compare_commune`/`compare_code_postal` sur `GET
+  /api/audit` et `GET /api/audit/pdf`). Sur l'écran de saisie, le lien
+  "+ Comparer à des communes précises" remplace le groupe automatique (même
+  strate démographique OFGL) par une liste de communes choisies à la main —
+  utile pour comparer directement à une ville de référence plutôt qu'à un
+  groupe statistique. Avec moins de deux communes exploitables, chaque poste
+  retombe sur "donnée indisponible" (pas de z-score fiable à partir d'une
+  seule comparaison) ; en dessous de `ScoringThresholds.min_peer_group_size`
+  (15), un avertissement rappelle que l'écart-type est peu représentatif —
+  à lire comme une comparaison directe plutôt qu'un signal statistique
+  robuste (`custom_compare_note`, affiché web/XLSX/PDF). Les communes
+  introuvables ou sans donnée OFGL pour l'exercice sont ignorées et listées
+  explicitement plutôt que de faire échouer tout l'audit. Persiste au
+  changement d'année (bouton "Changer d'année" réutilise la même sélection).
 
 ### Qualité et fiabilité des données
 

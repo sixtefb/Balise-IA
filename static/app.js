@@ -29,6 +29,7 @@ const screens = {
 
 let lastReport = null;
 let lastHistory = null;
+let lastCompareTo = [];
 let loadingTimer = null;
 
 function showScreen(name) {
@@ -85,8 +86,49 @@ document.getElementById('form-analyse').addEventListener('submit', (e) => {
   const errorEl = document.getElementById('input-error');
   errorEl.classList.add('hidden');
   if (!ville || !cp) return;
-  runAnalyse(ville, cp, annee);
+  runAnalyse(ville, cp, annee, readCompareRows());
 });
+
+// ---- Groupe de comparaison choisi manuellement ----
+
+document.getElementById('btn-toggle-compare').addEventListener('click', () => {
+  const section = document.getElementById('compare-section');
+  section.classList.toggle('hidden');
+  if (!section.classList.contains('hidden') && !document.getElementById('compare-rows').children.length) {
+    addCompareRow();
+    addCompareRow();
+  }
+});
+
+document.getElementById('btn-add-compare-row').addEventListener('click', () => addCompareRow());
+
+function addCompareRow(nom, cp) {
+  const row = document.createElement('div');
+  row.className = 'compare-row';
+  row.style.cssText = 'display:flex; gap:8px; margin-bottom:8px; align-items:center;';
+  row.innerHTML = `
+    <input class="field-input compare-nom" placeholder="Ville" style="flex:2;" value="${nom ? escapeHtml(nom) : ''}">
+    <input class="field-input mono compare-cp" placeholder="Code postal" style="flex:1;" value="${cp ? escapeHtml(cp) : ''}">
+    <button type="button" class="btn-remove-compare mono" style="background:none; border:none; color:#8f3826; font-size:15px; cursor:pointer; padding:4px 9px;">×</button>
+  `;
+  row.querySelector('.btn-remove-compare').addEventListener('click', () => row.remove());
+  document.getElementById('compare-rows').appendChild(row);
+}
+
+function readCompareRows() {
+  return Array.from(document.querySelectorAll('#compare-rows .compare-row'))
+    .map((row) => [row.querySelector('.compare-nom').value.trim(), row.querySelector('.compare-cp').value.trim()])
+    .filter(([nom, cp]) => nom && cp);
+}
+
+function buildAuditUrl(base, ville, cp, annee, compareTo) {
+  let url = `${base}?commune=${encodeURIComponent(ville)}&code_postal=${encodeURIComponent(cp)}`;
+  if (annee) url += `&exercice=${encodeURIComponent(annee)}`;
+  (compareTo || []).forEach(([nom, compareCp]) => {
+    url += `&compare_commune=${encodeURIComponent(nom)}&compare_code_postal=${encodeURIComponent(compareCp)}`;
+  });
+  return url;
+}
 
 // ---- Écran de chargement ----
 
@@ -133,12 +175,11 @@ function stopLoadingAnimation() {
 
 // ---- Lancement de l'analyse ----
 
-async function runAnalyse(ville, cp, annee) {
+async function runAnalyse(ville, cp, annee, compareTo) {
   showScreen('loading');
   startLoadingAnimation(ville, cp);
   try {
-    let url = `/api/audit?commune=${encodeURIComponent(ville)}&code_postal=${encodeURIComponent(cp)}`;
-    if (annee) url += `&exercice=${encodeURIComponent(annee)}`;
+    const url = buildAuditUrl('/api/audit', ville, cp, annee, compareTo);
     const res = await fetch(url);
     const data = await res.json();
     if (!res.ok) {
@@ -148,6 +189,7 @@ async function runAnalyse(ville, cp, annee) {
     document.getElementById('loading-bar').style.width = '100%';
     lastReport = data;
     lastHistory = null;
+    lastCompareTo = compareTo || [];
     resetEvolutionSection();
     renderReport(data);
     showScreen('report');
@@ -176,8 +218,7 @@ document.getElementById('btn-change-annee').addEventListener('click', async () =
   const originalLabel = btn.textContent;
   btn.textContent = '…';
   try {
-    let url = `/api/audit?commune=${encodeURIComponent(commune.nom)}&code_postal=${encodeURIComponent(cp)}`;
-    if (yearRaw) url += `&exercice=${encodeURIComponent(yearRaw)}`;
+    const url = buildAuditUrl('/api/audit', commune.nom, cp, yearRaw, lastCompareTo);
     const res = await fetch(url);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
@@ -242,11 +283,13 @@ function renderReport(data) {
   document.getElementById('report-ville').textContent = commune.nom;
   document.getElementById('report-cp').textContent = commune.codes_postaux[0] || '';
   const peerBtn = document.getElementById('btn-peer-list');
-  peerBtn.textContent =
-    `${data.peer_group_size} communes de la même strate — ${data.strate_label}${commune.region ? ', ' + commune.region : ''}${data.exercice ? ' (exercice ' + data.exercice + ')' : ''}`;
+  peerBtn.textContent = data.custom_peer_group
+    ? `${data.peer_group_size} commune${data.peer_group_size > 1 ? 's' : ''} choisie${data.peer_group_size > 1 ? 's' : ''}${data.exercice ? ' (exercice ' + data.exercice + ')' : ''}`
+    : `${data.peer_group_size} communes de la même strate — ${data.strate_label}${commune.region ? ', ' + commune.region : ''}${data.exercice ? ' (exercice ' + data.exercice + ')' : ''}`;
   const peerNoteEl = document.getElementById('peer-group-note');
-  if (data.peer_group_note) {
-    peerNoteEl.textContent = data.peer_group_note;
+  const activeNote = data.custom_compare_note || data.peer_group_note;
+  if (activeNote) {
+    peerNoteEl.textContent = activeNote;
     peerNoteEl.classList.remove('hidden');
   } else {
     peerNoteEl.classList.add('hidden');
@@ -278,7 +321,7 @@ function renderReport(data) {
         ${isMaintenance ? `<p class="mono" style="font-size:10.5px; color:#9a9b9f; margin:0 0 8px; font-style:italic;">Source différente des 5 postes ci-dessus : cumul des marchés publics DECP notifiés (voirie, espaces verts, bâtiments, nettoyage), pas une dépense annuelle OFGL — comparable entre communes, mais pas à lire comme un budget annuel.</p>` : ''}
         ${renderDistributionSvg(c.peer_values, c.commune_par_habitant, qs.bar)}
         <div class="mono" style="display:flex; justify-content:space-between; font-size:10.5px; color:#9a9b9f; margin-top:5px; flex-wrap:wrap; gap:6px;">
-          <span>médiane strate&nbsp;: ${fmtEur(c.peer_median_par_habitant)}/hab</span>
+          <span>médiane du groupe&nbsp;: ${fmtEur(c.peer_median_par_habitant)}/hab</span>
           <span style="color:${qs.color}; font-weight:600;">cette commune&nbsp;: ${fmtEur(c.commune_par_habitant)}/hab</span>
           <span>${c.peer_count} communes comparées</span>
         </div>
@@ -300,13 +343,13 @@ function renderReport(data) {
   const vigilance = categories.filter((c) => c.qualification === 'alerte' || c.qualification === 'a_surveiller');
 
   document.getElementById('points-forts').innerHTML = (forts.length ? forts : [null]).map((c) => {
-    if (!c) return `<p style="margin:0; font-size:14px; line-height:1.55; color:#33353c;">Aucun poste nettement en dessous de la médiane de strate cette année.</p>`;
-    return `<p style="margin:0; font-size:14px; line-height:1.55; color:#33353c;">${escapeHtml(c.label)} : ${fmtPct(c.delta_pct)} vs médiane de strate.</p>`;
+    if (!c) return `<p style="margin:0; font-size:14px; line-height:1.55; color:#33353c;">Aucun poste nettement en dessous de la médiane du groupe cette année.</p>`;
+    return `<p style="margin:0; font-size:14px; line-height:1.55; color:#33353c;">${escapeHtml(c.label)} : ${fmtPct(c.delta_pct)} vs médiane du groupe.</p>`;
   }).join('');
 
   document.getElementById('points-vigilance').innerHTML = (vigilance.length ? vigilance : [null]).map((c) => {
-    if (!c) return `<p style="margin:0; font-size:14px; line-height:1.55; color:#33353c;">Aucun poste de dépense significativement au-dessus de la médiane de strate.</p>`;
-    return `<p style="margin:0; font-size:14px; line-height:1.55; color:#33353c;">${escapeHtml(c.label)} : ${fmtPct(c.delta_pct)} vs médiane de strate, à examiner.</p>`;
+    if (!c) return `<p style="margin:0; font-size:14px; line-height:1.55; color:#33353c;">Aucun poste de dépense significativement au-dessus de la médiane du groupe.</p>`;
+    return `<p style="margin:0; font-size:14px; line-height:1.55; color:#33353c;">${escapeHtml(c.label)} : ${fmtPct(c.delta_pct)} vs médiane du groupe, à examiner.</p>`;
   }).join('');
 }
 
@@ -366,9 +409,12 @@ function buildSummary(data) {
   const vigilance = categories.filter((c) => c.qualification === 'alerte' || c.qualification === 'a_surveiller');
   const efficient = categories.filter((c) => c.qualification === 'efficient');
 
-  let text = `La commune présente un indice d'efficacité budgétaire de ${score.global}/100 (${score.verdict.toLowerCase()}) vis-à-vis des ${data.peer_group_size} communes de sa strate démographique.`;
+  const groupDesc = data.custom_peer_group
+    ? `des ${data.peer_group_size} commune${data.peer_group_size > 1 ? 's' : ''} choisie${data.peer_group_size > 1 ? 's' : ''}`
+    : `des ${data.peer_group_size} communes de sa strate démographique`;
+  let text = `La commune présente un indice d'efficacité budgétaire de ${score.global}/100 (${score.verdict.toLowerCase()}) vis-à-vis ${groupDesc}.`;
   if (vigilance.length) {
-    text += ` Les écarts se concentrent sur ${vigilance.map((c) => c.label.toLowerCase()).join(', ')}, au-dessus de la médiane de strate.`;
+    text += ` Les écarts se concentrent sur ${vigilance.map((c) => c.label.toLowerCase()).join(', ')}, au-dessus de la médiane du groupe.`;
   }
   if (efficient.length) {
     text += ` À l'inverse, ${efficient.map((c) => c.label.toLowerCase()).join(', ')} apparaissent maîtrisés.`;
@@ -644,8 +690,7 @@ document.getElementById('btn-export-pdf').addEventListener('click', async () => 
   try {
     const data = lastReport;
     const cp = data.commune.codes_postaux[0] || '';
-    let url = `/api/audit/pdf?commune=${encodeURIComponent(data.commune.nom)}&code_postal=${encodeURIComponent(cp)}`;
-    if (data.exercice) url += `&exercice=${encodeURIComponent(data.exercice)}`;
+    const url = buildAuditUrl('/api/audit/pdf', data.commune.nom, cp, data.exercice, lastCompareTo);
     const res = await fetch(url);
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));

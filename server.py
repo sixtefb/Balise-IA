@@ -47,6 +47,18 @@ def index():
     return send_from_directory(STATIC_DIR, "index.html")
 
 
+def _parse_compare_to(req) -> list[tuple[str, str]] | None:
+    """Communes de comparaison choisies manuellement (paramètres répétés, appariés par position)."""
+    noms = req.args.getlist("compare_commune")
+    codes_postaux = req.args.getlist("compare_code_postal")
+    pairs = [
+        (nom.strip(), cp.strip())
+        for nom, cp in zip(noms, codes_postaux)
+        if nom.strip() and cp.strip()
+    ]
+    return pairs or None
+
+
 @app.get("/api/audit")
 def api_audit():
     commune_nom = (request.args.get("commune") or "").strip()
@@ -64,7 +76,7 @@ def api_audit():
             return jsonify({"error": "'exercice' doit être un entier (ex. 2023)."}), 400
 
     try:
-        result = run_audit(commune_nom, code_postal, exercice=exercice)
+        result = run_audit(commune_nom, code_postal, exercice=exercice, compare_to=_parse_compare_to(request))
     except CommuneAmbiguousError as exc:
         return jsonify({"error": str(exc)}), 409
     except CommuneNotFoundError as exc:
@@ -101,7 +113,7 @@ def api_audit_pdf():
             return jsonify({"error": "'exercice' doit être un entier (ex. 2023)."}), 400
 
     try:
-        result = run_audit(commune_nom, code_postal, exercice=exercice)
+        result = run_audit(commune_nom, code_postal, exercice=exercice, compare_to=_parse_compare_to(request))
     except CommuneAmbiguousError as exc:
         return jsonify({"error": str(exc)}), 409
     except CommuneNotFoundError as exc:

@@ -21,7 +21,7 @@ from balise.ingestion.insee import (
     resolve_commune,
 )
 from balise.models import CommuneIdentity
-from balise.scoring import CommuneScoreCard, ScoringError, score_commune
+from balise.scoring import CommuneScoreCard, ScoringError, score_commune, score_commune_custom
 
 __all__ = [
     "AuditError",
@@ -33,6 +33,7 @@ __all__ = [
     "MAX_HISTORY_YEARS",
     "ScoringError",
     "audit_to_dict",
+    "custom_compare_note",
     "decp_coverage_note",
     "peer_group_note",
     "run_audit",
@@ -59,11 +60,60 @@ class AuditResult:
     demographie: dict | None
     generated_at: str
     data_freshness: dict[str, str | None]
+    custom_compare_note: str | None = None
 
 
 def strate_label(score_card: CommuneScoreCard) -> str:
     """Libellé humain de la strate démographique OFGL utilisée pour le groupe de pairs."""
+    if score_card.custom_peer_group:
+        return "groupe personnalisé"
     return OFGL_STRATE_LABELS.get(score_card.strate_value, f"strate {score_card.strate_value}")
+
+
+def custom_compare_note(
+    score_card: CommuneScoreCard,
+    unresolved_names: list[str] | None = None,
+    settings: Settings = SETTINGS,
+) -> str | None:
+    """Explication à afficher quand la comparaison se fait contre un groupe choisi manuellement.
+
+    Contrairement au groupe automatique (strate démographique OFGL), rien ne
+    garantit que le nombre de communes choisies soit statistiquement
+    représentatif : avec moins de deux pairs exploitables, chaque poste
+    retombe sur "donnee_absente" (voir score_commune_custom) plutôt que
+    d'afficher un écart trompeur.
+    """
+    if not score_card.custom_peer_group:
+        return None
+
+    parts: list[str] = []
+    if score_card.peer_group_size < 2:
+        parts.append(
+            "Comparaison à un groupe choisi manuellement, mais avec moins de deux communes "
+            "exploitables : aucun écart n'est calculé (il faut au moins deux communes de "
+            "comparaison pour un écart significatif), au lieu du groupe automatique par strate "
+            "démographique."
+        )
+    elif score_card.peer_group_size < settings.scoring.min_peer_group_size:
+        parts.append(
+            f"Comparaison à {score_card.peer_group_size} commune(s) choisie(s) manuellement, au lieu "
+            "du groupe automatique par strate démographique : avec aussi peu de communes, l'écart-type "
+            "est peu représentatif — à lire comme une comparaison directe plutôt qu'un signal "
+            "statistique robuste."
+        )
+    else:
+        parts.append(
+            f"Comparaison à {score_card.peer_group_size} communes choisies manuellement, au lieu du "
+            "groupe automatique par strate démographique."
+        )
+    if unresolved_names:
+        parts.append(f"Introuvable(s), donc ignorée(s) : {', '.join(unresolved_names)}.")
+    if score_card.custom_peer_unavailable:
+        parts.append(
+            "Pas de données OFGL pour cet exercice, donc ignorée(s) : "
+            f"{', '.join(score_card.custom_peer_unavailable)}."
+        )
+    return " ".join(parts)
 
 
 def peer_group_note(score_card: CommuneScoreCard) -> str | None:
@@ -71,8 +121,11 @@ def peer_group_note(score_card: CommuneScoreCard) -> str | None:
 
     Voir balise.scoring._narrow_peer_group_by_population : la strate OFGL la
     plus haute ("100 000 habitants et plus") est ouverte et peut mélanger
-    des villes de tailles très différentes.
+    des villes de tailles très différentes. Ne s'applique pas à un groupe
+    choisi manuellement (voir custom_compare_note dans ce cas).
     """
+    if score_card.custom_peer_group:
+        return None
     if score_card.peer_group_refined:
         return (
             "Comparaison resserrée aux communes de la strate dont la population est du même "
@@ -196,8 +249,16 @@ def run_audit(
     settings: Settings = SETTINGS,
     use_cache: bool = True,
     markets_limit: int = 8,
+    compare_to: list[tuple[str, str]] | None = None,
 ) -> AuditResult:
     """Résout la commune, calcule son score budgétaire et récupère ses marchés notables.
+
+    `compare_to` (optionnel) : liste de (nom, code_postal) de communes
+    choisies manuellement pour remplacer le groupe de comparaison
+    automatique (strate démographique OFGL) par un groupe personnalisé (voir
+    balise.scoring.score_commune_custom). Les communes introuvables sont
+    ignorées silencieusement au niveau de la résolution (signalées ensuite
+    via `custom_compare_note`) plutôt que de faire échouer tout l'audit.
 
     Lève CommuneNotFoundError/CommuneAmbiguousError/InseeError (résolution
     commune) ou AuditError (score OFGL indisponible pour cette commune).
@@ -210,10 +271,29 @@ def run_audit(
         commune.code_insee, settings=settings
     )
 
-    try:
-        score_card = score_commune(commune.code_insee, exercice=resolved_exercice, settings=settings)
-    except ScoringError as exc:
-        raise AuditError(str(exc)) from exc
+    compare_note: str | None = None
+    if compare_to:
+        peer_codes: list[str] = []
+        unresolved_names: list[str] = []
+        for nom, cp in compare_to:
+            try:
+                peer_identity = resolve_commune(nom, cp, settings=settings, use_cache=use_cache)
+                peer_codes.append(peer_identity.code_insee)
+            except (CommuneNotFoundError, CommuneAmbiguousError):
+                unresolved_names.append(f"{nom} ({cp})")
+
+        try:
+            score_card = score_commune_custom(
+                commune.code_insee, peer_codes, exercice=resolved_exercice, settings=settings
+            )
+        except ScoringError as exc:
+            raise AuditError(str(exc)) from exc
+        compare_note = custom_compare_note(score_card, unresolved_names, settings=settings)
+    else:
+        try:
+            score_card = score_commune(commune.code_insee, exercice=resolved_exercice, settings=settings)
+        except ScoringError as exc:
+            raise AuditError(str(exc)) from exc
 
     marches: list[dict] = []
     if commune.siren:
@@ -244,6 +324,7 @@ def run_audit(
         demographie=demographie,
         generated_at=datetime.now(timezone.utc).isoformat(),
         data_freshness=data_freshness,
+        custom_compare_note=compare_note,
     )
 
 
@@ -322,6 +403,8 @@ def audit_to_dict(result: AuditResult) -> dict:
         "strate_label": strate_label(card),
         "peer_group_size": card.peer_group_size,
         "peer_group_note": peer_group_note(card),
+        "custom_peer_group": card.custom_peer_group,
+        "custom_compare_note": result.custom_compare_note,
         "score": {"global": card.global_score, "verdict": card.verdict},
         "categories": [
             {

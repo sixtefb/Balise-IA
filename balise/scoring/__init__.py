@@ -81,6 +81,8 @@ class CommuneScoreCard:
     peers: tuple[PeerCommune, ...]
     peer_group_refined: bool = False  # groupe resserré par population (voir _narrow_peer_group_by_population)
     peer_group_heterogeneous: bool = False  # resserrement souhaitable mais impossible (pas assez de pairs)
+    custom_peer_group: bool = False  # groupe choisi manuellement (score_commune_custom), pas la strate automatique
+    custom_peer_unavailable: tuple[str, ...] = ()  # code_insee demandés mais sans donnée OFGL pour l'exercice
 
 
 def _qualify(z_score: float, thresholds=SETTINGS.scoring) -> str:
@@ -243,30 +245,24 @@ def _narrow_peer_group_by_population(
     return peers, False, True
 
 
-def score_commune(
+def _build_score_card(
     code_insee: str,
-    exercice: int | None = None,
-    settings: Settings = SETTINGS,
+    commune_data: dict,
+    peers: list[dict],
+    exercice: int | None,
+    settings: Settings,
+    strate_value: str,
+    peer_group_refined: bool = False,
+    peer_group_heterogeneous: bool = False,
+    custom_peer_group: bool = False,
+    custom_peer_unavailable: tuple[str, ...] = (),
 ) -> CommuneScoreCard:
-    """Calcule le score d'efficacité budgétaire d'une commune vs son groupe de pairs."""
-    commune_data = ofgl.get_financial_data(code_insee, exercice=exercice, settings=settings)
-    if commune_data is None:
-        if exercice is not None:
-            raise ScoringError(
-                f"Aucune donnée OFGL pour la commune {code_insee} sur l'exercice {exercice}. "
-                "Les comptes OFGL démarrent en général en 2014-2017 et s'arrêtent 1 à 2 ans "
-                "avant l'année en cours (délai de publication)."
-            )
-        raise ScoringError(f"Aucune donnée OFGL pour la commune {code_insee}.")
+    """Calcule les écarts par poste et le score global à partir d'une commune + un groupe de pairs déjà résolu.
 
-    strate_value = commune_data.get("strate")
-    if not strate_value:
-        raise ScoringError(f"Strate démographique OFGL introuvable pour la commune {code_insee}.")
-
-    peers = build_peer_group(code_insee, strate_value, exercice, settings=settings)
-    peers, peer_group_refined, peer_group_heterogeneous = _narrow_peer_group_by_population(
-        commune_data.get("population"), peers, settings
-    )
+    Partagé par `score_commune` (groupe automatique par strate démographique)
+    et `score_commune_custom` (groupe choisi manuellement) : les deux ne
+    diffèrent que par la façon dont `peers` est constitué en amont.
+    """
     commune_norm = normalize_financial_data(commune_data, settings=settings)
     peers_norm = [normalize_financial_data(p, settings=settings) for p in peers]
 
@@ -295,7 +291,7 @@ def score_commune(
     return CommuneScoreCard(
         code_insee=code_insee,
         exercice=exercice,
-        strate_value=str(strate_value),
+        strate_value=strate_value,
         peer_group_size=len(peers),
         global_score=global_score,
         verdict=_verdict(global_score),
@@ -303,4 +299,96 @@ def score_commune(
         peers=peer_communes,
         peer_group_refined=peer_group_refined,
         peer_group_heterogeneous=peer_group_heterogeneous,
+        custom_peer_group=custom_peer_group,
+        custom_peer_unavailable=custom_peer_unavailable,
+    )
+
+
+def score_commune(
+    code_insee: str,
+    exercice: int | None = None,
+    settings: Settings = SETTINGS,
+) -> CommuneScoreCard:
+    """Calcule le score d'efficacité budgétaire d'une commune vs son groupe de pairs (strate OFGL)."""
+    commune_data = ofgl.get_financial_data(code_insee, exercice=exercice, settings=settings)
+    if commune_data is None:
+        if exercice is not None:
+            raise ScoringError(
+                f"Aucune donnée OFGL pour la commune {code_insee} sur l'exercice {exercice}. "
+                "Les comptes OFGL démarrent en général en 2014-2017 et s'arrêtent 1 à 2 ans "
+                "avant l'année en cours (délai de publication)."
+            )
+        raise ScoringError(f"Aucune donnée OFGL pour la commune {code_insee}.")
+
+    strate_value = commune_data.get("strate")
+    if not strate_value:
+        raise ScoringError(f"Strate démographique OFGL introuvable pour la commune {code_insee}.")
+
+    peers = build_peer_group(code_insee, strate_value, exercice, settings=settings)
+    peers, peer_group_refined, peer_group_heterogeneous = _narrow_peer_group_by_population(
+        commune_data.get("population"), peers, settings
+    )
+
+    return _build_score_card(
+        code_insee=code_insee,
+        commune_data=commune_data,
+        peers=peers,
+        exercice=exercice,
+        settings=settings,
+        strate_value=str(strate_value),
+        peer_group_refined=peer_group_refined,
+        peer_group_heterogeneous=peer_group_heterogeneous,
+    )
+
+
+def score_commune_custom(
+    code_insee: str,
+    peer_codes_insee: list[str],
+    exercice: int | None = None,
+    settings: Settings = SETTINGS,
+) -> CommuneScoreCard:
+    """Calcule le score d'une commune contre un groupe de comparaison choisi manuellement.
+
+    Contrairement à `score_commune` (groupe automatique par strate
+    démographique OFGL), les pairs sont ici fournis explicitement par
+    l'appelant (ex. l'utilisateur, via l'interface). Avec peu de communes
+    choisies, `_build_item_score` retombe sur "donnee_absente" dès qu'il y a
+    moins de 2 valeurs de pairs exploitables (pas de z-score fiable à partir
+    d'une seule comparaison) : c'est intentionnel, pas un bug. Les codes
+    INSEE demandés mais sans donnée OFGL pour l'exercice sont exclus du
+    groupe et listés dans `CommuneScoreCard.custom_peer_unavailable`, plutôt
+    que de faire échouer tout le calcul.
+    """
+    commune_data = ofgl.get_financial_data(code_insee, exercice=exercice, settings=settings)
+    if commune_data is None:
+        if exercice is not None:
+            raise ScoringError(
+                f"Aucune donnée OFGL pour la commune {code_insee} sur l'exercice {exercice}. "
+                "Les comptes OFGL démarrent en général en 2014-2017 et s'arrêtent 1 à 2 ans "
+                "avant l'année en cours (délai de publication)."
+            )
+        raise ScoringError(f"Aucune donnée OFGL pour la commune {code_insee}.")
+
+    peers: list[dict] = []
+    unavailable: list[str] = []
+    seen: set[str] = set()
+    for peer_code in peer_codes_insee:
+        if peer_code == code_insee or peer_code in seen:
+            continue
+        seen.add(peer_code)
+        peer_data = ofgl.get_financial_data(peer_code, exercice=exercice, settings=settings)
+        if peer_data is None:
+            unavailable.append(peer_code)
+            continue
+        peers.append(peer_data)
+
+    return _build_score_card(
+        code_insee=code_insee,
+        commune_data=commune_data,
+        peers=peers,
+        exercice=exercice,
+        settings=settings,
+        strate_value=str(commune_data.get("strate") or ""),
+        custom_peer_group=True,
+        custom_peer_unavailable=tuple(unavailable),
     )
