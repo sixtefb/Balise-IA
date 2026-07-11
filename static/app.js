@@ -294,6 +294,13 @@ function renderReport(data) {
   } else {
     peerNoteEl.classList.add('hidden');
   }
+  const contextNoteEl = document.getElementById('context-note');
+  if (data.context_note) {
+    contextNoteEl.textContent = data.context_note;
+    contextNoteEl.classList.remove('hidden');
+  } else {
+    contextNoteEl.classList.add('hidden');
+  }
   document.getElementById('report-date').innerHTML = `Analyse du<br>${fmtDate(data.generated_at)}`;
   document.getElementById('input-change-annee').value = data.exercice || '';
   document.getElementById('annee-error').classList.add('hidden');

@@ -96,6 +96,17 @@ def _parse_number(raw_value) -> float | None:
         return None
 
 
+def _parse_oui_non(raw_value) -> bool | None:
+    if raw_value is None:
+        return None
+    normalized = _normalize(str(raw_value))
+    if normalized == "oui":
+        return True
+    if normalized == "non":
+        return False
+    return None
+
+
 def _match_aggregate(agregat_label) -> str | None:
     """Match un libellé d'agrégat OFGL à un poste de dépense canonique.
 
@@ -160,6 +171,11 @@ def _pivot_records(records: list[dict], exercice: int | None = None) -> dict[str
     type_budget_field = _try_resolve_field(sample_fields, "type_de_budget")
     agregat_field = _resolve_field(sample_fields, "agregat")
     montant_field = _resolve_field(sample_fields, "montant")
+    rural_field = _try_resolve_field(sample_fields, "rural")
+    montagne_field = _try_resolve_field(sample_fields, "montagne")
+    touristique_field = _try_resolve_field(sample_fields, "touristique")
+    qpv_field = _try_resolve_field(sample_fields, "qpv")
+    revenu_field = _try_resolve_field(sample_fields, "tranche_revenu")
 
     by_commune: dict[str, dict] = {}
     for record in records:
@@ -196,6 +212,11 @@ def _pivot_records(records: list[dict], exercice: int | None = None) -> dict[str
                 ),
                 "strate": record.get(strate_field) if strate_field else None,
                 "nom": record.get(nom_field) if nom_field else None,
+                "rural": _parse_oui_non(record.get(rural_field)) if rural_field else None,
+                "montagne": _parse_oui_non(record.get(montagne_field)) if montagne_field else None,
+                "touristique": _parse_oui_non(record.get(touristique_field)) if touristique_field else None,
+                "qpv": _parse_oui_non(record.get(qpv_field)) if qpv_field else None,
+                "tranche_revenu": record.get(revenu_field) if revenu_field else None,
             },
         )
 

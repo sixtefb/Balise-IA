@@ -146,6 +146,30 @@ OFGL_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "montant": ("montant", "valeur", "montant_euros"),
     "type_de_budget": ("type_de_budget", "typebudget", "budget_type"),
     "commune_nom": ("com_name", "commune_nom", "nom_commune"),
+    # Champs de contexte OFGL présents dans la réponse mais non utilisés
+    # jusqu'ici (confirmés par appel réel, voir describe_schema) : servent à
+    # signaler quand la commune s'écarte fortement du contexte de son groupe
+    # de comparaison (niveau de vie, caractère rural/touristique/montagne,
+    # présence de quartiers prioritaires), sans changer le calcul du score -
+    # voir balise.scoring._context_note.
+    "rural": ("rural",),
+    "montagne": ("montagne",),
+    "touristique": ("touristique",),
+    "qpv": ("qpv",),
+    "tranche_revenu": ("tranche_revenu_imposable_par_habitant",),
+}
+
+# Libellés humains des tranches de revenu imposable par habitant OFGL,
+# confirmés via la description du champ à l'API (appel réel) :
+# 0 : < 10 000€ ; 1 : 10 000-15 000€ ; 2 : 15 000-20 000€ ;
+# 3 : 20 000-25 000€ ; 4 : 25 000-30 000€ ; 5 : >= 30 000€.
+OFGL_REVENU_LABELS: dict[str, str] = {
+    "0": "moins de 10 000 €",
+    "1": "10 000 à 14 999 €",
+    "2": "15 000 à 19 999 €",
+    "3": "20 000 à 24 999 €",
+    "4": "25 000 à 29 999 €",
+    "5": "30 000 € et plus",
 }
 
 # Valeur attendue (comparaison exacte, normalisée) du champ "type_de_budget"

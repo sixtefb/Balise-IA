@@ -68,6 +68,35 @@ class PeerCommune:
 
 
 @dataclass(frozen=True)
+class ContextInfo:
+    """Contexte OFGL de la commune auditée vs son groupe de pairs (niveau de vie,
+    caractère rural/touristique/montagne, présence de quartier prioritaire).
+
+    Purement informatif : ces champs (OFGL_COLUMN_ALIASES: rural, montagne,
+    touristique, qpv, tranche_revenu) sont présents dans la réponse OFGL mais
+    n'influencent ni le groupe de comparaison ni le calcul du score lui-même
+    - contrairement à _narrow_peer_group_by_population, on ne resserre pas le
+    groupe sur ces critères (risque de le faire fondre sous
+    min_peer_group_size en cumulant deux resserrements). On se contente de
+    prévenir l'utilisateur quand le contexte diffère fortement de celui du
+    groupe (voir balise.pipeline.context_note), pour l'aider à interpréter
+    les écarts avec discernement plutôt que de les prendre au pied de la
+    lettre.
+    """
+
+    commune_touristique: bool | None
+    commune_montagne: bool | None
+    commune_rural: bool | None
+    commune_qpv: bool | None
+    commune_tranche_revenu: str | None
+    peer_touristique_share: float | None  # proportion de pairs touristiques (0-1), parmi ceux où le champ est connu
+    peer_montagne_share: float | None
+    peer_rural_share: float | None
+    peer_qpv_share: float | None
+    peer_revenu_median: float | None  # médiane des tranches de revenu (valeur numérique 0-5) des pairs
+
+
+@dataclass(frozen=True)
 class CommuneScoreCard:
     """Résultat complet du scoring d'une commune pour un exercice donné."""
 
@@ -83,6 +112,7 @@ class CommuneScoreCard:
     peer_group_heterogeneous: bool = False  # resserrement souhaitable mais impossible (pas assez de pairs)
     custom_peer_group: bool = False  # groupe choisi manuellement (score_commune_custom), pas la strate automatique
     custom_peer_unavailable: tuple[str, ...] = ()  # code_insee demandés mais sans donnée OFGL pour l'exercice
+    context: ContextInfo | None = None
 
 
 def _qualify(z_score: float, thresholds=SETTINGS.scoring) -> str:
@@ -245,6 +275,34 @@ def _narrow_peer_group_by_population(
     return peers, False, True
 
 
+def _peer_flag_share(peers: list[dict], flag_key: str) -> float | None:
+    """Proportion de pairs à True sur `flag_key`, parmi ceux où le champ est connu (non None)."""
+    known = [p[flag_key] for p in peers if p.get(flag_key) is not None]
+    if not known:
+        return None
+    return sum(1 for v in known if v) / len(known)
+
+
+def _build_context_info(commune_data: dict, peers: list[dict]) -> ContextInfo:
+    peer_revenus = [
+        float(p["tranche_revenu"]) for p in peers if p.get("tranche_revenu") not in (None, "")
+    ]
+    commune_revenu = commune_data.get("tranche_revenu")
+
+    return ContextInfo(
+        commune_touristique=commune_data.get("touristique"),
+        commune_montagne=commune_data.get("montagne"),
+        commune_rural=commune_data.get("rural"),
+        commune_qpv=commune_data.get("qpv"),
+        commune_tranche_revenu=str(commune_revenu) if commune_revenu not in (None, "") else None,
+        peer_touristique_share=_peer_flag_share(peers, "touristique"),
+        peer_montagne_share=_peer_flag_share(peers, "montagne"),
+        peer_rural_share=_peer_flag_share(peers, "rural"),
+        peer_qpv_share=_peer_flag_share(peers, "qpv"),
+        peer_revenu_median=median(peer_revenus) if peer_revenus else None,
+    )
+
+
 def _build_score_card(
     code_insee: str,
     commune_data: dict,
@@ -299,6 +357,7 @@ def _build_score_card(
         peers=peer_communes,
         peer_group_refined=peer_group_refined,
         peer_group_heterogeneous=peer_group_heterogeneous,
+        context=_build_context_info(commune_data, peers),
         custom_peer_group=custom_peer_group,
         custom_peer_unavailable=custom_peer_unavailable,
     )

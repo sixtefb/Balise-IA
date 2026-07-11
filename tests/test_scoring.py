@@ -280,3 +280,40 @@ def test_score_commune_custom_raises_when_commune_missing(monkeypatch):
     monkeypatch.setattr(scoring.ofgl, "get_financial_data", lambda code_insee, exercice=None, settings=None: None)
     with pytest.raises(scoring.ScoringError, match="Aucune donnée OFGL"):
         scoring.score_commune_custom("00000", ["00001"], exercice=2024)
+
+
+# ---- Contexte OFGL (niveau de vie, rural/montagne/touristique/QPV) ----
+
+
+def test_build_context_info_computes_shares_and_median():
+    commune_data = {"touristique": True, "montagne": False, "rural": False, "qpv": True, "tranche_revenu": "5"}
+    peers = [
+        {"touristique": False, "montagne": False, "rural": True, "qpv": False, "tranche_revenu": "2"},
+        {"touristique": False, "montagne": False, "rural": True, "qpv": False, "tranche_revenu": "3"},
+        {"touristique": True, "montagne": False, "rural": False, "qpv": False, "tranche_revenu": "2"},
+    ]
+    context = scoring._build_context_info(commune_data, peers)
+
+    assert context.commune_touristique is True
+    assert context.commune_tranche_revenu == "5"
+    assert context.peer_touristique_share == pytest.approx(1 / 3)
+    assert context.peer_rural_share == pytest.approx(2 / 3)
+    assert context.peer_qpv_share == pytest.approx(0.0)
+    assert context.peer_revenu_median == pytest.approx(2.0)
+
+
+def test_build_context_info_handles_missing_fields():
+    context = scoring._build_context_info({}, [{}, {}])
+
+    assert context.commune_touristique is None
+    assert context.commune_tranche_revenu is None
+    assert context.peer_touristique_share is None
+    assert context.peer_revenu_median is None
+
+
+def test_score_commune_populates_context(mocked_sources):
+    # PEERS/COMMUNE_DATA (fixture mocked_sources) n'ont pas ces champs :
+    # context doit rester présent mais avec des valeurs None, pas planter.
+    card = scoring.score_commune("99999", exercice=2024)
+    assert card.context is not None
+    assert card.context.commune_touristique is None

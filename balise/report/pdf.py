@@ -192,6 +192,22 @@ def generate_pdf(audit: dict, generated_on: date | None = None) -> bytes:
     return bytes(out)
 
 
+def _draw_note_box(pdf: _ReportPDF, text: str) -> None:
+    """Encart d'avertissement (fond ambre) mesuré dynamiquement puis dessiné - voir
+    _draw_weakness_block pour la même précaution sur le calcul de hauteur du bloc."""
+    note_y = pdf.get_y() + 2
+    qs = QUALIF_STYLE["a_surveiller"]
+    pdf.set_font("Helvetica", "", 8.5)
+    text_h = pdf.multi_cell(CONTENT_W - 8, 4, text, dry_run=True, output=MethodReturnValue.HEIGHT)
+    note_h = text_h + 4
+    pdf.set_fill_color(*qs["bg"])
+    pdf.rect(MARGIN, note_y, CONTENT_W, note_h, style="F")
+    pdf.set_xy(MARGIN + 4, note_y + 2)
+    pdf.set_text_color(*qs["color"])
+    pdf.multi_cell(CONTENT_W - 8, 4, text)
+    pdf.set_y(note_y + note_h + 4)
+
+
 def _cover_page(pdf: _ReportPDF, audit: dict, generated_on: date) -> None:
     commune = audit["commune"]
     score = audit["score"]
@@ -271,17 +287,9 @@ def _cover_page(pdf: _ReportPDF, audit: dict, generated_on: date) -> None:
 
     active_note = audit.get("custom_compare_note") or audit.get("peer_group_note")
     if active_note:
-        note_y = pdf.get_y() + 2
-        qs = QUALIF_STYLE["a_surveiller"]
-        pdf.set_font("Helvetica", "", 8.5)
-        text_h = pdf.multi_cell(CONTENT_W - 8, 4, active_note, dry_run=True, output=MethodReturnValue.HEIGHT)
-        note_h = text_h + 4
-        pdf.set_fill_color(*qs["bg"])
-        pdf.rect(MARGIN, note_y, CONTENT_W, note_h, style="F")
-        pdf.set_xy(MARGIN + 4, note_y + 2)
-        pdf.set_text_color(*qs["color"])
-        pdf.multi_cell(CONTENT_W - 8, 4, active_note)
-        pdf.set_y(note_y + note_h + 4)
+        _draw_note_box(pdf, active_note)
+    if audit.get("context_note"):
+        _draw_note_box(pdf, audit["context_note"])
 
     vigilance = [c for c in audit["categories"] if c["qualification"] in ("alerte", "a_surveiller")]
     efficient = [c for c in audit["categories"] if c["qualification"] == "efficient"]

@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from balise.config import OFGL_STRATE_LABELS, SETTINGS, Settings
+from balise.config import OFGL_REVENU_LABELS, OFGL_STRATE_LABELS, SETTINGS, Settings
 from balise.ingestion import decp, insee_demographie
 from balise.ingestion.decp import DecpError
 from balise.ingestion.insee import (
@@ -33,6 +33,7 @@ __all__ = [
     "MAX_HISTORY_YEARS",
     "ScoringError",
     "audit_to_dict",
+    "context_note",
     "custom_compare_note",
     "decp_coverage_note",
     "peer_group_note",
@@ -40,6 +41,15 @@ __all__ = [
     "run_history",
     "strate_label",
 ]
+
+# Seuil de partage minimal (proportion de pairs partageant le même
+# caractère touristique/montagne/QPV) en dessous duquel on considère que la
+# commune s'écarte du contexte de son groupe de comparaison.
+CONTEXT_FLAG_SHARE_THRESHOLD = 0.2
+# Écart minimal (en nombre de tranches, sur une échelle 0-5) de revenu
+# imposable par habitant à partir duquel on signale un contexte de niveau
+# de vie différent.
+CONTEXT_REVENU_TRANCHE_GAP = 2
 
 # Chaque année d'historique = une requête nationale OFGL par exercice
 # (~10-15s non cachée). Chargé à la demande côté interface (bouton "Voir
@@ -139,6 +149,47 @@ def peer_group_note(score_card: CommuneScoreCard) -> str | None:
             "pour resserrer la comparaison : les écarts mesurés sont à interpréter avec prudence."
         )
     return None
+
+
+_CONTEXT_FLAG_LABELS = {
+    "touristique": "touristique",
+    "montagne": "de montagne",
+    "qpv": "avec quartier prioritaire de la ville",
+    "rural": "rurale",
+}
+
+
+def context_note(score_card: CommuneScoreCard, settings: Settings = SETTINGS) -> str | None:
+    """Avertissement quand le contexte OFGL de la commune (niveau de vie, caractère
+    rural/touristique/montagne, présence de QPV) diffère fortement de celui de son
+    groupe de comparaison — informatif seulement, n'a pas influencé le score lui-même
+    (voir balise.scoring.ContextInfo). Une commune touristique comparée à des communes
+    qui ne le sont pas peut par exemple avoir des dépenses d'entretien plus élevées sans
+    que ce soit un signe d'inefficacité (population saisonnière non comptée dans le
+    recensement).
+    """
+    context = score_card.context
+    if context is None:
+        return None
+
+    mismatches = []
+    for flag_key, label in _CONTEXT_FLAG_LABELS.items():
+        commune_flag = getattr(context, f"commune_{flag_key}")
+        peer_share = getattr(context, f"peer_{flag_key}_share")
+        if commune_flag is True and peer_share is not None and peer_share < CONTEXT_FLAG_SHARE_THRESHOLD:
+            mismatches.append(f"commune {label} (contrairement à la plupart de son groupe de comparaison)")
+
+    if (
+        context.commune_tranche_revenu is not None
+        and context.peer_revenu_median is not None
+        and abs(float(context.commune_tranche_revenu) - context.peer_revenu_median) >= CONTEXT_REVENU_TRANCHE_GAP
+    ):
+        commune_label = OFGL_REVENU_LABELS.get(context.commune_tranche_revenu, context.commune_tranche_revenu)
+        mismatches.append(f"niveau de vie ({commune_label} de revenu imposable par habitant) sensiblement différent de la médiane de son groupe de comparaison")
+
+    if not mismatches:
+        return None
+    return "Contexte à prendre en compte pour interpréter les écarts : " + " ; ".join(mismatches) + "."
 
 
 # DECP est un système déclaratif : rien n'oblige une commune à publier tous
@@ -403,6 +454,7 @@ def audit_to_dict(result: AuditResult) -> dict:
         "strate_label": strate_label(card),
         "peer_group_size": card.peer_group_size,
         "peer_group_note": peer_group_note(card),
+        "context_note": context_note(card),
         "custom_peer_group": card.custom_peer_group,
         "custom_compare_note": result.custom_compare_note,
         "score": {"global": card.global_score, "verdict": card.verdict},

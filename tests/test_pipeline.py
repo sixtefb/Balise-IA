@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from balise import pipeline
 from balise.config import SETTINGS
-from balise.scoring import CommuneScoreCard
+from balise.scoring import CommuneScoreCard, ContextInfo
 
 
 def _card(
@@ -11,6 +11,7 @@ def _card(
     custom_peer_group=False,
     custom_peer_unavailable=(),
     peer_group_size=41,
+    context=None,
 ) -> CommuneScoreCard:
     return CommuneScoreCard(
         code_insee="99999",
@@ -25,7 +26,25 @@ def _card(
         peer_group_heterogeneous=peer_group_heterogeneous,
         custom_peer_group=custom_peer_group,
         custom_peer_unavailable=custom_peer_unavailable,
+        context=context,
     )
+
+
+def _context(**overrides) -> ContextInfo:
+    defaults = dict(
+        commune_touristique=None,
+        commune_montagne=None,
+        commune_rural=None,
+        commune_qpv=None,
+        commune_tranche_revenu=None,
+        peer_touristique_share=None,
+        peer_montagne_share=None,
+        peer_rural_share=None,
+        peer_qpv_share=None,
+        peer_revenu_median=None,
+    )
+    defaults.update(overrides)
+    return ContextInfo(**defaults)
 
 
 def test_peer_group_note_none_by_default():
@@ -142,3 +161,49 @@ def test_custom_compare_note_lists_unresolved_and_unavailable():
     note = pipeline.custom_compare_note(card, unresolved_names=["Villeinconnue (99999)"], settings=SETTINGS)
     assert "Villeinconnue (99999)" in note
     assert "00099" in note
+
+
+# ---- Contexte OFGL (context_note) ----
+
+
+def test_context_note_none_without_context():
+    assert pipeline.context_note(_card(context=None)) is None
+
+
+def test_context_note_none_when_context_matches_peers():
+    card = _card(context=_context(commune_touristique=False, peer_touristique_share=0.8))
+    assert pipeline.context_note(card) is None
+
+
+def test_context_note_flags_touristique_mismatch():
+    card = _card(context=_context(commune_touristique=True, peer_touristique_share=0.05))
+    note = pipeline.context_note(card)
+    assert note is not None
+    assert "touristique" in note
+
+
+def test_context_note_flags_revenu_mismatch():
+    card = _card(context=_context(commune_tranche_revenu="5", peer_revenu_median=1.0))
+    note = pipeline.context_note(card)
+    assert note is not None
+    assert "niveau de vie" in note
+    assert "30 000" in note
+
+
+def test_context_note_no_flag_when_revenu_gap_small():
+    card = _card(context=_context(commune_tranche_revenu="2", peer_revenu_median=1.0))
+    assert pipeline.context_note(card) is None
+
+
+def test_context_note_combines_multiple_mismatches():
+    card = _card(
+        context=_context(
+            commune_touristique=True,
+            peer_touristique_share=0.0,
+            commune_qpv=True,
+            peer_qpv_share=0.0,
+        )
+    )
+    note = pipeline.context_note(card)
+    assert "touristique" in note
+    assert "quartier prioritaire" in note

@@ -260,6 +260,21 @@ l'affichage d'avertissements) :
   cache de chaque source (OFGL, marchés DECP, poste "Entretien"), lue sans
   requête réseau supplémentaire, affichée en pied de rapport web, dans
   l'export XLSX et sur la page "Sources" du PDF.
+- **Contexte de la commune (niveau de vie, rural/montagne/touristique, QPV)**
+  (`balise.scoring.ContextInfo`, `balise.pipeline.context_note`). `data.ofgl.fr`
+  renvoie, pour chaque commune, des champs déjà présents dans la réponse mais
+  jusqu'ici jetés : `tranche_revenu_imposable_par_habitant` (revenu médian,
+  0 à 5), `rural`, `montagne`, `touristique`, `qpv` (Oui/Non). Purement
+  informatif — n'influence ni le groupe de comparaison ni le calcul du score
+  (pas de resserrement supplémentaire, pour éviter de cumuler deux
+  affinements et faire fondre le groupe sous `min_peer_group_size`) : un
+  avertissement s'affiche quand la commune a un caractère (touristique,
+  montagne, QPV) partagé par moins de 20% de son groupe de pairs, ou un
+  niveau de vie éloigné d'au moins 2 tranches de la médiane du groupe.
+  Constaté en direct : Vernon (commune touristique, contrairement à la
+  quasi-totalité de sa strate) et Paris (revenu par habitant très supérieur
+  à la médiane de son groupe) déclenchent chacun l'avertissement à bon
+  escient.
 
 ## Déploiement (Render)
 

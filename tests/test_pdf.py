@@ -35,6 +35,7 @@ def _audit(
     data_freshness=None,
     custom_peer_group=False,
     custom_compare_note=None,
+    context_note=None,
 ):
     return {
         "commune": {
@@ -53,6 +54,7 @@ def _audit(
         "strate_label": "groupe personnalisé" if custom_peer_group else "10 000 à 19 999 habitants",
         "peer_group_size": 20,
         "peer_group_note": peer_group_note,
+        "context_note": context_note,
         "custom_peer_group": custom_peer_group,
         "custom_compare_note": custom_compare_note,
         "score": {"global": 62, "verdict": "Vigilance"},
@@ -264,3 +266,20 @@ def test_generate_pdf_custom_peer_group_methodology_text():
     full_text = "".join(p.extract_text() or "" for p in pages)
     assert "choisie" in full_text and "manuellement" in full_text
     assert "strate démographique (" not in full_text
+
+
+def test_generate_pdf_shows_context_note_alongside_peer_group_note():
+    context = "Contexte à prendre en compte pour interpréter les écarts : commune touristique."
+    pdf_bytes = generate_pdf(
+        _audit(peer_group_note="Comparaison resserrée aux communes proches en population.", context_note=context),
+        generated_on=date(2024, 1, 1),
+    )
+    pages = PdfReader(BytesIO(pdf_bytes)).pages
+    full_text = "".join(p.extract_text() or "" for p in pages)
+    assert "resserrée aux communes proches" in full_text
+    assert "commune touristique" in full_text
+
+
+def test_generate_pdf_without_context_note_stays_valid():
+    pdf_bytes = generate_pdf(_audit(context_note=None), generated_on=date(2024, 1, 1))
+    assert pdf_bytes.startswith(b"%PDF")
